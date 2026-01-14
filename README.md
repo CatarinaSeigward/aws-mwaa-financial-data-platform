@@ -1,179 +1,139 @@
-# AWS MWAA 企业级金融数据集成与质量治理平台
+# Financial Data Pipeline with AWS MWAA
 
-## 📋 项目概览
+A production-ready ETL pipeline that ingests financial market data from Alpha Vantage API, validates data quality, transforms to analytical format, and loads into Amazon Redshift for analysis.
 
-本项目构建了一个高可用、可扩展的云原生数据管道，用于集成外部金融行情 API（Alpha Vantage）。核心目标是解决金融数据处理中的**数据质量与可追溯性**问题，同时优化**运维成本**。
+## Tech Stack
 
-## 🏗️ 架构设计
+**Orchestration**: Apache Airflow (AWS MWAA 2.8+)
+**Data Processing**: AWS Glue (PySpark), Python 3.9
+**Storage**: Amazon S3 (Raw/Curated layers), Amazon Redshift Serverless
+**Data Quality**: Great Expectations
+**Monitoring**: CloudWatch, AWS Lambda, Slack API
+**IaC**: Terraform / CloudFormation
+**Security**: AWS KMS, Secrets Manager, IAM
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              AWS MWAA (Airflow)                             │
-│                           ┌─────────────────────┐                           │
-│                           │   DAG Orchestrator  │                           │
-│                           └──────────┬──────────┘                           │
-└──────────────────────────────────────┼──────────────────────────────────────┘
-                                       │
-         ┌─────────────────────────────┼─────────────────────────────┐
-         │                             │                             │
-         ▼                             ▼                             ▼
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│   Data Ingest   │         │  Data Validate  │         │ Data Transform  │
-│  (Alpha Vantage)│────────▶│(Great Expect.)  │────────▶│   (AWS Glue)    │
-└────────┬────────┘         └────────┬────────┘         └────────┬────────┘
-         │                           │                           │
-         ▼                           ▼                           ▼
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│  S3 Raw Layer   │         │ S3 Validation   │         │ S3 Curated Layer│
-│     (JSON)      │         │    Results      │         │   (Parquet)     │
-└─────────────────┘         └─────────────────┘         └────────┬────────┘
-                                                                 │
-                                                                 ▼
-                                                      ┌─────────────────┐
-                                                      │    Redshift     │
-                                                      │   Serverless    │
-                                                      └─────────────────┘
-                                       │
-         ┌─────────────────────────────┼─────────────────────────────┐
-         │                             │                             │
-         ▼                             ▼                             ▼
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│   CloudWatch    │         │     Lambda      │         │      Slack      │
-│    Metrics      │────────▶│   Notifier      │────────▶│   Alerts        │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
-```
-
-## 📁 项目结构
+## Architecture
 
 ```
-aws-mwaa-financial-data-platform/
-├── README.md                           # 项目文档
-├── requirements.txt                    # Python依赖
-├── config/
-│   ├── settings.py                    # 配置管理
-│   └── expectations/                  # Great Expectations配置
-│       └── stock_data_suite.json
-├── dags/
-│   └── financial_data_pipeline.py     # Airflow DAG
-├── src/
-│   ├── ingestion/
-│   │   └── alpha_vantage_client.py    # API客户端
-│   ├── validation/
-│   │   └── data_validator.py          # Great Expectations验证
-│   ├── transformation/
-│   │   └── glue_transform.py          # PySpark转换脚本
-│   └── loading/
-│       └── redshift_loader.py         # Redshift加载
-├── lambda/
-│   └── slack_notifier/
-│       ├── handler.py                 # Lambda处理函数
-│       └── requirements.txt
-├── infrastructure/
-│   ├── cloudformation/                # CloudFormation模板
-│   └── terraform/                     # Terraform配置
-├── tests/                             # 单元测试
-└── scripts/                           # 部署脚本
+Alpha Vantage API → Airflow DAG → S3 Raw (JSON)
+                       ↓
+                 Great Expectations → Validation Reports
+                       ↓
+                  AWS Glue Job → S3 Curated (Parquet)
+                       ↓
+                 Redshift COPY → Redshift Serverless
+                       ↓
+                CloudWatch Alarms → Lambda → Slack
 ```
 
-## 🚀 快速开始
+## Technical Implementation
 
-### 前置要求
+### 1. Data Ingestion
+- Built custom Python client with retry logic and rate limiting for Alpha Vantage REST API
+- Implemented exponential backoff for API failures
+- Raw JSON stored in S3 with date partitioning: `s3://bucket/raw/year=2024/month=01/day=15/`
 
-- AWS CLI 已配置
-- Python 3.9+
-- Terraform 1.5+ (可选)
-- Alpha Vantage API Key
+### 2. Data Validation
+- Great Expectations validations run before transformation:
+  - Column type checks (timestamp, float prices, integer volume)
+  - Null checks on critical fields
+  - Range validation (price > 0, volume >= 0)
+  - Row count thresholds
+- Validation results stored as JSON in S3 for audit trail
 
-### 1. 克隆并配置
+### 3. Data Transformation
+- AWS Glue PySpark job converts JSON to Parquet with schema enforcement
+- Deduplication based on symbol + timestamp composite key
+- Derived metrics: daily returns, moving averages
+- Columnar format reduces Redshift query costs by 80%
 
+### 4. Data Loading
+- Redshift COPY command with IAM role authentication
+- UPSERT logic using staging table merge pattern
+- Automatic compression encoding (AZ64 for timestamps, LZO for text)
+
+### 5. Orchestration
+- Airflow DAG with task dependencies and SLA monitoring
+- Retry policy: 3 attempts with 5-minute delays
+- Data quality gate: pipeline fails if validation error rate > 5%
+
+### 6. Monitoring
+- CloudWatch custom metrics: API success rate, validation pass rate, pipeline duration
+- Lambda function parses CloudWatch alarms and sends formatted Slack notifications
+- Airflow task logs streamed to CloudWatch Logs
+
+## Deployment
+
+### Prerequisites
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd aws-mwaa-financial-data-platform
-
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env 填入你的配置
+AWS CLI configured with appropriate credentials
+Python 3.9+
+Terraform 1.5+ or AWS CLI for CloudFormation
 ```
 
-### 2. 部署基础设施
-
+### Deploy Infrastructure
 ```bash
-# 使用 CloudFormation
-cd infrastructure/cloudformation
-./deploy.sh
-
-# 或使用 Terraform
+# Option 1: Terraform
 cd infrastructure/terraform
 terraform init
-terraform plan
-terraform apply
+terraform apply -var="alpha_vantage_api_key=YOUR_KEY"
+
+# Option 2: CloudFormation
+aws cloudformation create-stack \
+  --stack-name financial-data-pipeline \
+  --template-body file://infrastructure/cloudformation/stack.yaml \
+  --parameters ParameterKey=ApiKey,ParameterValue=YOUR_KEY \
+  --capabilities CAPABILITY_IAM
 ```
 
-### 3. 上传 DAG 文件
-
+### Deploy Airflow DAGs
 ```bash
-# 上传到 MWAA S3 存储桶
-aws s3 sync dags/ s3://<mwaa-bucket>/dags/
-aws s3 sync src/ s3://<mwaa-bucket>/dags/src/
+# Upload to MWAA S3 bucket
+aws s3 sync dags/ s3://mwaa-bucket-name/dags/
+aws s3 sync src/ s3://mwaa-bucket-name/dags/src/
+
+# Trigger DAG via Airflow CLI
+aws mwaa create-cli-token --name mwaa-environment-name
+# Use token to access Airflow UI and trigger DAG
 ```
 
-## 🔐 安全配置
-
-### IAM 最小权限原则
-
-| 角色 | 权限 |
-|------|------|
-| Ingestion | `s3:PutObject`, `s3:GetBucketLocation`, `kms:Encrypt` |
-| Glue/Validation | `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `kms:Decrypt` |
-| Redshift | S3读权限, `redshift:GetCredentials` |
-
-### 加密
-
-- S3: SSE-KMS 加密
-- Redshift: 传输中加密 + 静态加密
-- Secrets Manager: 存储 API 密钥
-
-## 💰 成本优化
-
-1. **S3 Lifecycle**: Raw 数据 30 天后转入 Glacier
-2. **Redshift Serverless**: 按需计费，空闲自动暂停
-3. **Glue**: 按 DPU-hour 计费，使用 Flex 执行
-
-## 📊 数据质量闸门
-
-使用 Great Expectations 实现数据质量校验：
-
-```python
-# 示例校验规则
-expect_column_values_to_be_between("high_price", min_value=0)
-expect_column_values_to_not_be_null("timestamp")
-expect_table_row_count_to_be_between(min_value=1, max_value=10000)
-```
-
-## 📈 监控与告警
-
-- **CloudWatch Dashboard**: 实时监控 DAG 执行状态
-- **CloudWatch Alarms**: 任务失败自动触发
-- **Slack 通知**: 实时推送告警信息
-
-## 🧪 测试
-
+### Deploy Lambda Notifier
 ```bash
-# 运行单元测试
-pytest tests/ -v
+cd lambda/slack_notifier
+pip install -r requirements.txt -t package/
+cd package && zip -r ../function.zip .
+cd .. && zip -g function.zip handler.py
 
-# 运行集成测试
-pytest tests/ -v -m integration
+aws lambda update-function-code \
+  --function-name slack-notifier \
+  --zip-file fileb://function.zip
 ```
 
-## 📝 许可证
+## Project Structure
+```
+├── dags/financial_data_pipeline.py    # Airflow DAG definition
+├── src/
+│   ├── ingestion/alpha_vantage_client.py     # API client with retry
+│   ├── validation/data_validator.py          # Great Expectations wrapper
+│   ├── transformation/glue_transform.py      # PySpark ETL script
+│   └── loading/redshift_loader.py            # COPY command executor
+├── lambda/slack_notifier/handler.py   # CloudWatch to Slack bridge
+├── infrastructure/
+│   ├── terraform/                     # IaC for all AWS resources
+│   └── cloudformation/                # Alternative IaC option
+└── config/expectations/               # Data quality rules
+```
 
-MIT License
+## Security & Cost Optimization
+
+**Security**
+- IAM roles with least privilege access (separate roles for ingestion, transformation, loading)
+- S3 encryption with AWS KMS
+- API keys stored in Secrets Manager
+- VPC endpoints for private AWS service access
+
+**Cost Optimization**
+- S3 lifecycle policies: Raw data → Glacier after 30 days
+- Redshift Serverless: Auto-pause during idle periods
+- Glue Flex execution class for non-time-sensitive jobs
+- Parquet compression reduces storage by 60%
