@@ -1,0 +1,5 @@
+# Lambda dependencies
+# Note: boto3 is included in Lambda runtime
+# This file is for local development and testing
+
+boto3>=1.28.0

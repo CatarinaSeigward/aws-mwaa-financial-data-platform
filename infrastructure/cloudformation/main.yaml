@@ -1,0 +1,857 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Financial Data Platform - Main Stack
+  Enterprise-grade data pipeline infrastructure for financial market data integration
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment name
+
+  ProjectName:
+    Type: String
+    Default: financial-data-platform
+    Description: Project name used for resource naming
+
+  AlphaVantageApiKey:
+    Type: String
+    NoEcho: true
+    Description: Alpha Vantage API key (stored in Secrets Manager)
+
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Slack webhook URL for notifications (optional)
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: VPC CIDR block
+
+  RedshiftAdminUsername:
+    Type: String
+    Default: admin
+    Description: Redshift admin username
+
+  RedshiftAdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Redshift admin password
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, 'production']
+  HasSlackWebhook: !Not [!Equals [!Ref SlackWebhookUrl, '']]
+
+Mappings:
+  EnvironmentConfig:
+    development:
+      RedshiftBaseCapacity: 8
+      GlueWorkers: 2
+      S3LifecycleDays: 30
+    staging:
+      RedshiftBaseCapacity: 16
+      GlueWorkers: 4
+      S3LifecycleDays: 60
+    production:
+      RedshiftBaseCapacity: 32
+      GlueWorkers: 10
+      S3LifecycleDays: 90
+
+Resources:
+  # ============================================================================
+  # VPC and Networking
+  # ============================================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 4, 8]]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-2'
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 4, 8]]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-1'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat'
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-rt'
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+
+  # ============================================================================
+  # KMS Key for Encryption
+  # ============================================================================
+  DataEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for encrypting financial data
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow Glue and Redshift
+            Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+                - redshift.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-data-key'
+
+  DataEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${ProjectName}-data-key'
+      TargetKeyId: !Ref DataEncryptionKey
+
+  # ============================================================================
+  # S3 Buckets
+  # ============================================================================
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-raw-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref DataEncryptionKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: !FindInMap [EnvironmentConfig, !Ref EnvironmentName, S3LifecycleDays]
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-raw'
+        - Key: DataClassification
+          Value: sensitive
+
+  CuratedDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-curated-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref DataEncryptionKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-curated'
+
+  ValidationResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-validation-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref DataEncryptionKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldResults
+            Status: Enabled
+            ExpirationInDays: 365
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-validation'
+
+  MWAABucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-mwaa-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-mwaa'
+
+  # ============================================================================
+  # Secrets Manager
+  # ============================================================================
+  AlphaVantageSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}/alpha-vantage-api-key'
+      Description: Alpha Vantage API key
+      SecretString: !Sub '{"api_key": "${AlphaVantageApiKey}"}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-alpha-vantage-secret'
+
+  SlackWebhookSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: HasSlackWebhook
+    Properties:
+      Name: !Sub '${ProjectName}/slack-webhook'
+      Description: Slack webhook URL
+      SecretString: !Sub '{"webhook_url": "${SlackWebhookUrl}"}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-slack-secret'
+
+  # ============================================================================
+  # IAM Roles
+  # ============================================================================
+  IngestionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-ingestion-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - airflow.amazonaws.com
+                - airflow-env.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonMWAAServiceRolePolicy
+      Policies:
+        - PolicyName: IngestionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt RawDataBucket.Arn
+                  - !Sub '${RawDataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt DataEncryptionKey.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref AlphaVantageSecret
+
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-glue-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GlueDataPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt RawDataBucket.Arn
+                  - !Sub '${RawDataBucket.Arn}/*'
+                  - !GetAtt CuratedDataBucket.Arn
+                  - !Sub '${CuratedDataBucket.Arn}/*'
+                  - !GetAtt ValidationResultsBucket.Arn
+                  - !Sub '${ValidationResultsBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt DataEncryptionKey.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  RedshiftRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-redshift-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: redshift.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: RedshiftS3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt CuratedDataBucket.Arn
+                  - !Sub '${CuratedDataBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !GetAtt DataEncryptionKey.Arn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaSecretsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !If [HasSlackWebhook, !Ref SlackWebhookSecret, !Ref 'AWS::NoValue']
+
+  # ============================================================================
+  # Redshift Serverless
+  # ============================================================================
+  RedshiftNamespace:
+    Type: AWS::RedshiftServerless::Namespace
+    Properties:
+      NamespaceName: !Sub '${ProjectName}-namespace'
+      AdminUsername: !Ref RedshiftAdminUsername
+      AdminUserPassword: !Ref RedshiftAdminPassword
+      DbName: financial_dw
+      IamRoles:
+        - !GetAtt RedshiftRole.Arn
+      DefaultIamRoleArn: !GetAtt RedshiftRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-namespace'
+
+  RedshiftWorkgroup:
+    Type: AWS::RedshiftServerless::Workgroup
+    Properties:
+      WorkgroupName: !Sub '${ProjectName}-workgroup'
+      NamespaceName: !Ref RedshiftNamespace
+      BaseCapacity: !FindInMap [EnvironmentConfig, !Ref EnvironmentName, RedshiftBaseCapacity]
+      PubliclyAccessible: false
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroupIds:
+        - !Ref RedshiftSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-workgroup'
+
+  RedshiftSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Redshift Serverless
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5439
+          ToPort: 5439
+          CidrIp: !Ref VpcCidr
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redshift-sg'
+
+  # ============================================================================
+  # AWS Glue
+  # ============================================================================
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseInput:
+        Name: !Sub '${ProjectName}_catalog'
+        Description: Financial data catalog
+
+  GlueTransformJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${ProjectName}-transform'
+      Role: !GetAtt GlueRole.Arn
+      GlueVersion: '4.0'
+      WorkerType: G.1X
+      NumberOfWorkers: !FindInMap [EnvironmentConfig, !Ref EnvironmentName, GlueWorkers]
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub 's3://${MWAABucket}/glue-scripts/transform.py'
+        PythonVersion: '3'
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': 'true'
+        '--enable-continuous-cloudwatch-log': 'true'
+        '--enable-spark-ui': 'true'
+        '--source_bucket': !Ref RawDataBucket
+        '--target_bucket': !Ref CuratedDataBucket
+      Tags:
+        Name: !Sub '${ProjectName}-transform'
+
+  # ============================================================================
+  # Lambda Function
+  # ============================================================================
+  SlackNotifierFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasSlackWebhook
+    Properties:
+      FunctionName: !Sub '${ProjectName}-slack-notifier'
+      Runtime: python3.11
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_SECRET_NAME: !Sub '${ProjectName}/slack-webhook'
+          AWS_REGION: !Ref 'AWS::Region'
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code via CI/CD
+          def lambda_handler(event, context):
+              return {'statusCode': 200}
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-slack-notifier'
+
+  # ============================================================================
+  # MWAA Environment
+  # ============================================================================
+  MWAASecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MWAA
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-mwaa-sg'
+
+  MWAAEnvironment:
+    Type: AWS::MWAA::Environment
+    DependsOn:
+      - MWAABucket
+      - PrivateSubnet1RouteTableAssociation
+      - PrivateSubnet2RouteTableAssociation
+    Properties:
+      Name: !Sub '${ProjectName}-mwaa'
+      AirflowVersion: '2.8.1'
+      EnvironmentClass: !If [IsProduction, mw1.large, mw1.small]
+      MaxWorkers: !If [IsProduction, 10, 2]
+      MinWorkers: 1
+      Schedulers: !If [IsProduction, 2, 1]
+      SourceBucketArn: !GetAtt MWAABucket.Arn
+      DagS3Path: dags
+      RequirementsS3Path: requirements.txt
+      ExecutionRoleArn: !GetAtt MWAAExecutionRole.Arn
+      NetworkConfiguration:
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !Ref MWAASecurityGroup
+      WebserverAccessMode: PUBLIC_ONLY
+      LoggingConfiguration:
+        DagProcessingLogs:
+          Enabled: true
+          LogLevel: INFO
+        SchedulerLogs:
+          Enabled: true
+          LogLevel: INFO
+        TaskLogs:
+          Enabled: true
+          LogLevel: INFO
+        WebserverLogs:
+          Enabled: true
+          LogLevel: INFO
+        WorkerLogs:
+          Enabled: true
+          LogLevel: INFO
+      Tags:
+        Name: !Sub '${ProjectName}-mwaa'
+        Environment: !Ref EnvironmentName
+
+  MWAAExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-mwaa-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - airflow.amazonaws.com
+                - airflow-env.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonMWAAServiceRolePolicy
+      Policies:
+        - PolicyName: MWAAExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3 access for all buckets
+              - Effect: Allow
+                Action:
+                  - s3:GetObject*
+                  - s3:PutObject*
+                  - s3:DeleteObject*
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt MWAABucket.Arn
+                  - !Sub '${MWAABucket.Arn}/*'
+                  - !GetAtt RawDataBucket.Arn
+                  - !Sub '${RawDataBucket.Arn}/*'
+                  - !GetAtt CuratedDataBucket.Arn
+                  - !Sub '${CuratedDataBucket.Arn}/*'
+                  - !GetAtt ValidationResultsBucket.Arn
+                  - !Sub '${ValidationResultsBucket.Arn}/*'
+              # KMS access
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt DataEncryptionKey.Arn
+              # Secrets Manager
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref AlphaVantageSecret
+              # Glue
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                  - glue:GetJobRun
+                  - glue:GetJobRuns
+                  - glue:BatchStopJobRun
+                Resource: '*'
+              # Redshift Data API
+              - Effect: Allow
+                Action:
+                  - redshift-data:ExecuteStatement
+                  - redshift-data:DescribeStatement
+                  - redshift-data:GetStatementResult
+                  - redshift-serverless:GetCredentials
+                Resource: '*'
+              # Lambda
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                  - logs:GetLogEvents
+                  - logs:GetLogRecord
+                  - logs:GetLogGroupFields
+                  - logs:GetQueryResults
+                Resource: '*'
+
+  # ============================================================================
+  # CloudWatch Dashboard
+  # ============================================================================
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ProjectName}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "MWAA Task Success Rate",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/MWAA", "TaskInstanceSuccesses", "Environment", "${ProjectName}-mwaa"],
+                  [".", "TaskInstanceFailures", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Sum"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Glue Job Duration",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  ["Glue", "glue.driver.aggregate.elapsedTime", "JobName", "${ProjectName}-transform", "JobRunId", "ALL", "Type", "gauge"]
+                ],
+                "period": 300,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "S3 Bucket Size",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/S3", "BucketSizeBytes", "BucketName", "${RawDataBucket}", "StorageType", "StandardStorage"],
+                  [".", ".", "BucketName", "${CuratedDataBucket}", "StorageType", "StandardStorage"]
+                ],
+                "period": 86400,
+                "stat": "Average"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Redshift Serverless Compute",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  ["AWS/Redshift-Serverless", "ComputeCapacity", "Workgroup", "${ProjectName}-workgroup"]
+                ],
+                "period": 300,
+                "stat": "Average"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${ProjectName}-VpcId'
+
+  RawBucketName:
+    Description: Raw data S3 bucket name
+    Value: !Ref RawDataBucket
+    Export:
+      Name: !Sub '${ProjectName}-RawBucket'
+
+  CuratedBucketName:
+    Description: Curated data S3 bucket name
+    Value: !Ref CuratedDataBucket
+    Export:
+      Name: !Sub '${ProjectName}-CuratedBucket'
+
+  MWAABucketName:
+    Description: MWAA S3 bucket name
+    Value: !Ref MWAABucket
+    Export:
+      Name: !Sub '${ProjectName}-MWAABucket'
+
+  RedshiftWorkgroupName:
+    Description: Redshift Serverless workgroup name
+    Value: !Ref RedshiftWorkgroup
+    Export:
+      Name: !Sub '${ProjectName}-RedshiftWorkgroup'
+
+  RedshiftNamespaceName:
+    Description: Redshift Serverless namespace name
+    Value: !Ref RedshiftNamespace
+    Export:
+      Name: !Sub '${ProjectName}-RedshiftNamespace'
+
+  MWAAEnvironmentName:
+    Description: MWAA environment name
+    Value: !Ref MWAAEnvironment
+    Export:
+      Name: !Sub '${ProjectName}-MWAAEnvironment'
+
+  GlueJobName:
+    Description: Glue transform job name
+    Value: !Ref GlueTransformJob
+    Export:
+      Name: !Sub '${ProjectName}-GlueJob'
+
+  KMSKeyArn:
+    Description: KMS key ARN for data encryption
+    Value: !GetAtt DataEncryptionKey.Arn
+    Export:
+      Name: !Sub '${ProjectName}-KMSKeyArn'
+
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectName}-dashboard'

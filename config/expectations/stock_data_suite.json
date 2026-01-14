@@ -1,0 +1,209 @@
+{
+  "expectation_suite_name": "stock_data_quality_suite",
+  "meta": {
+    "great_expectations_version": "0.18.0",
+    "created_at": "2024-01-01T00:00:00.000000Z",
+    "updated_at": "2024-01-01T00:00:00.000000Z",
+    "created_by": "Financial Data Platform Team",
+    "notes": "Data quality expectations for Alpha Vantage stock data"
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_columns_to_match_ordered_list",
+      "kwargs": {
+        "column_list": [
+          "symbol",
+          "timestamp",
+          "open_price",
+          "high_price",
+          "low_price",
+          "close_price",
+          "adjusted_close",
+          "volume",
+          "dividend_amount",
+          "split_coefficient"
+        ]
+      },
+      "meta": {
+        "notes": "Ensure all required columns are present in correct order"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "symbol"
+      },
+      "meta": {
+        "notes": "Stock symbol is mandatory - critical identifier"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "timestamp"
+      },
+      "meta": {
+        "notes": "Timestamp is mandatory - blocks data without temporal reference"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "close_price"
+      },
+      "meta": {
+        "notes": "Close price is the most critical price point"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "open_price",
+        "min_value": 0,
+        "max_value": 1000000,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Open price must be positive and reasonable"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "high_price",
+        "min_value": 0,
+        "max_value": 1000000,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "High price must be positive - stock price cannot be negative"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "low_price",
+        "min_value": 0,
+        "max_value": 1000000,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Low price must be positive"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "close_price",
+        "min_value": 0,
+        "max_value": 1000000,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Close price must be positive"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "volume",
+        "min_value": 0,
+        "mostly": 0.95
+      },
+      "meta": {
+        "notes": "Volume should be non-negative"
+      }
+    },
+    {
+      "expectation_type": "expect_column_pair_values_A_to_be_greater_than_B",
+      "kwargs": {
+        "column_A": "high_price",
+        "column_B": "low_price",
+        "or_equal": true,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "High price should always be >= low price - basic OHLC integrity"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "open_price",
+        "min_value": {"$PARAMETER": "low_price"},
+        "max_value": {"$PARAMETER": "high_price"},
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Open price should be between low and high"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "close_price",
+        "min_value": {"$PARAMETER": "low_price"},
+        "max_value": {"$PARAMETER": "high_price"},
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Close price should be between low and high"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_match_regex",
+      "kwargs": {
+        "column": "symbol",
+        "regex": "^[A-Z]{1,5}$",
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Symbol should be 1-5 uppercase letters (standard US ticker format)"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_dateutil_parseable",
+      "kwargs": {
+        "column": "timestamp"
+      },
+      "meta": {
+        "notes": "Timestamp must be a valid parseable date"
+      }
+    },
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "min_value": 1,
+        "max_value": 50000
+      },
+      "meta": {
+        "notes": "Monitor daily data volume - detect anomalies in data ingestion"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "split_coefficient",
+        "min_value": 0,
+        "max_value": 100,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Split coefficient should be reasonable"
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "dividend_amount",
+        "min_value": 0,
+        "mostly": 0.99
+      },
+      "meta": {
+        "notes": "Dividend amount should be non-negative"
+      }
+    }
+  ],
+  "ge_cloud_id": null,
+  "data_asset_type": null
+}
