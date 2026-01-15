@@ -1,139 +1,322 @@
-# Financial Data Pipeline with AWS MWAA
+# Financial Data Platform - Scala + Spark ETL Pipeline
 
-A production-ready ETL pipeline that ingests financial market data from Alpha Vantage API, validates data quality, transforms to analytical format, and loads into Amazon Redshift for analysis.
+🚀 **Enterprise-Grade Financial Data ETL Pipeline** - Scala + Spark for Large-Scale Data Processing
 
-## Tech Stack
+**🎯 Perfect Portfolio Project for Job Seekers** - Run locally at zero cost, scalable to AWS production
 
-**Orchestration**: Apache Airflow (AWS MWAA 2.8+)
-**Data Processing**: AWS Glue (PySpark), Python 3.9
-**Storage**: Amazon S3 (Raw/Curated layers), Amazon Redshift Serverless
-**Data Quality**: Great Expectations
-**Monitoring**: CloudWatch, AWS Lambda, Slack API
-**IaC**: Terraform / CloudFormation
-**Security**: AWS KMS, Secrets Manager, IAM
+---
 
-## Architecture
+## 🌟 Project Highlights
 
-```
-Alpha Vantage API → Airflow DAG → S3 Raw (JSON)
-                       ↓
-                 Great Expectations → Validation Reports
-                       ↓
-                  AWS Glue Job → S3 Curated (Parquet)
-                       ↓
-                 Redshift COPY → Redshift Serverless
-                       ↓
-                CloudWatch Alarms → Lambda → Slack
-```
+- **✅ Scala + Spark 3.4.1** - Type-safe distributed data processing
+- **✅ Zero-Cost Execution** - Docker local environment, no AWS required
+- **✅ No API Keys Needed** - Built-in data generator, 100% stable
+- **✅ 5-Minute Demo** - One-command full pipeline execution
+- **✅ Production-Ready** - Switch to AWS (Glue + Redshift) when needed
 
-## Technical Implementation
+---
 
-### 1. Data Ingestion
-- Built custom Python client with retry logic and rate limiting for Alpha Vantage REST API
-- Implemented exponential backoff for API failures
-- Raw JSON stored in S3 with date partitioning: `s3://bucket/raw/year=2024/month=01/day=15/`
+## 🚀 Quick Start
 
-### 2. Data Validation
-- Great Expectations validations run before transformation:
-  - Column type checks (timestamp, float prices, integer volume)
-  - Null checks on critical fields
-  - Range validation (price > 0, volume >= 0)
-  - Row count thresholds
-- Validation results stored as JSON in S3 for audit trail
+### Option 1: Local Docker (Default - $0/month)
 
-### 3. Data Transformation
-- AWS Glue PySpark job converts JSON to Parquet with schema enforcement
-- Deduplication based on symbol + timestamp composite key
-- Derived metrics: daily returns, moving averages
-- Columnar format reduces Redshift query costs by 80%
-
-### 4. Data Loading
-- Redshift COPY command with IAM role authentication
-- UPSERT logic using staging table merge pattern
-- Automatic compression encoding (AZ64 for timestamps, LZO for text)
-
-### 5. Orchestration
-- Airflow DAG with task dependencies and SLA monitoring
-- Retry policy: 3 attempts with 5-minute delays
-- Data quality gate: pipeline fails if validation error rate > 5%
-
-### 6. Monitoring
-- CloudWatch custom metrics: API success rate, validation pass rate, pipeline duration
-- Lambda function parses CloudWatch alarms and sends formatted Slack notifications
-- Airflow task logs streamed to CloudWatch Logs
-
-## Deployment
-
-### Prerequisites
 ```bash
-AWS CLI configured with appropriate credentials
-Python 3.9+
-Terraform 1.5+ or AWS CLI for CloudFormation
+# 1. Generate sample data
+python scripts/data_generator.py --preset demo
+
+# 2. Build Scala JAR
+sbt assembly
+
+# 3. Start Docker environment
+docker-compose -f docker-compose-spark.yml up -d
+
+# 4. Run ETL pipeline
+./scripts/build-and-submit.sh local
+
+# 5. Query results
+docker exec -it financial-postgres psql -U airflow -d financial_dw \
+    -c "SELECT * FROM fact_stock_prices LIMIT 10;"
 ```
 
-### Deploy Infrastructure
+**Or use the one-command demo:**
 ```bash
-# Option 1: Terraform
-cd infrastructure/terraform
-terraform init
-terraform apply -var="alpha_vantage_api_key=YOUR_KEY"
-
-# Option 2: CloudFormation
-aws cloudformation create-stack \
-  --stack-name financial-data-pipeline \
-  --template-body file://infrastructure/cloudformation/stack.yaml \
-  --parameters ParameterKey=ApiKey,ParameterValue=YOUR_KEY \
-  --capabilities CAPABILITY_IAM
+./scripts/quick-demo.sh
 ```
 
-### Deploy Airflow DAGs
+### Option 2: AWS Free Tier ($0-3/month)
+
 ```bash
-# Upload to MWAA S3 bucket
-aws s3 sync dags/ s3://mwaa-bucket-name/dags/
-aws s3 sync src/ s3://mwaa-bucket-name/dags/src/
+# 1. Configure AWS CLI
+aws configure
 
-# Trigger DAG via Airflow CLI
-aws mwaa create-cli-token --name mwaa-environment-name
-# Use token to access Airflow UI and trigger DAG
+# 2. Deploy to AWS with one command
+./scripts/deploy-to-aws.sh
+
+# 3. Access via public URL
+# Airflow: http://<PUBLIC_IP>:8080
+# Spark UI: http://<PUBLIC_IP>:8081
 ```
 
-### Deploy Lambda Notifier
+📖 **First time setup?** See [GETTING_STARTED.md](GETTING_STARTED.md) for local deployment or [AWS_FREE_TIER_DEPLOYMENT.md](AWS_FREE_TIER_DEPLOYMENT.md) for AWS deployment.
+
+---
+
+## 💰 Cost Comparison
+
+| Solution | Monthly Cost | Deployment | Notes |
+|----------|--------------|------------|-------|
+| **Docker Local** | **$0** | Local machine | ✅ Best for interview demos |
+| **AWS Free Tier** | **$0-3** | EC2 + S3 | ✅ Best for online portfolio |
+| AWS Optimized | $26,150 | Full AWS | Production-ready |
+| AWS Original | $174,323 | Full AWS | ❌ Too expensive |
+
+**Savings: 99.998%** 💰 (AWS Free Tier vs AWS Original)
+
+Detailed analysis: [COST_ANALYSIS_SCALA.md](COST_ANALYSIS_SCALA.md)
+
+---
+
+## 🛠️ Technology Stack
+
+### Core Technologies
+- **Scala 2.12** + **Spark 3.4.1** - Data processing engine
+- **Airflow 2.8.1** - Workflow orchestration
+- **PostgreSQL 15** - Data warehouse
+- **Docker** - Containerized deployment
+
+### AWS Technologies (Optional)
+- **EC2** - Compute instances (t2.micro Free Tier)
+- **S3** - Object storage for raw/processed data
+- **IAM** - Access management with instance profiles
+- **CloudFormation** - Infrastructure as Code
+- **CloudWatch** - Monitoring and logging
+
+---
+
+## 📊 Data Acquisition
+
+### Method 1: Simulated Data Generation ✅ (Default)
+
 ```bash
-cd lambda/slack_notifier
-pip install -r requirements.txt -t package/
-cd package && zip -r ../function.zip .
-cd .. && zip -g function.zip handler.py
-
-aws lambda update-function-code \
-  --function-name slack-notifier \
-  --zip-file fileb://function.zip
+python scripts/data_generator.py --preset demo
 ```
 
-## Project Structure
-```
-├── dags/financial_data_pipeline.py    # Airflow DAG definition
-├── src/
-│   ├── ingestion/alpha_vantage_client.py     # API client with retry
-│   ├── validation/data_validator.py          # Great Expectations wrapper
-│   ├── transformation/glue_transform.py      # PySpark ETL script
-│   └── loading/redshift_loader.py            # COPY command executor
-├── lambda/slack_notifier/handler.py   # CloudWatch to Slack bridge
-├── infrastructure/
-│   ├── terraform/                     # IaC for all AWS resources
-│   └── cloudformation/                # Alternative IaC option
-└── config/expectations/               # Data quality rules
+**Advantages:**
+- ✅ No API Key required
+- ✅ 100% stable
+- ✅ No rate limits
+- ✅ Realistic price movements using Geometric Brownian Motion
+
+### Method 2: Real API (Optional)
+
+```bash
+export ALPHA_VANTAGE_API_KEY="your_key"
+# Modify DAG to use fetch_stock_data_from_api()
 ```
 
-## Security & Cost Optimization
+---
 
-**Security**
-- IAM roles with least privilege access (separate roles for ingestion, transformation, loading)
-- S3 encryption with AWS KMS
-- API keys stored in Secrets Manager
-- VPC endpoints for private AWS service access
+## 📚 Documentation
 
-**Cost Optimization**
-- S3 lifecycle policies: Raw data → Glacier after 30 days
-- Redshift Serverless: Auto-pause during idle periods
-- Glue Flex execution class for non-time-sensitive jobs
-- Parquet compression reduces storage by 60%
+### Setup Guides
+- [Getting Started Guide](GETTING_STARTED.md) - Local Docker setup (step-by-step)
+- [AWS Free Tier Deployment](AWS_FREE_TIER_DEPLOYMENT.md) - AWS deployment guide
+- [AWS Deployment Summary](AWS_DEPLOYMENT_SUMMARY.md) - Quick AWS overview
+
+### Technical Documentation
+- [Scala + Spark Guide](SCALA_SPARK_GUIDE.md) - Implementation details
+- [Data Generation Guide](DATA_GENERATION_GUIDE.md) - Data generator usage
+- [Cost Analysis Report](COST_ANALYSIS_SCALA.md) - Detailed cost breakdown
+- [Environment Configuration](.env.example) - Configuration template
+
+---
+
+## 🎯 Interview Presentation
+
+### 5-Minute Demo Flow
+
+1. Run `./scripts/quick-demo.sh`
+2. Show Spark UI (localhost:8081)
+3. Query PostgreSQL results
+4. Explain Scala code highlights
+
+### Key Talking Points
+
+> "This is an enterprise-grade ETL pipeline designed with a **dual-deployment architecture**. The same codebase supports both local Docker ($0/month) and AWS Free Tier ($0-3/month) deployments through environment-based configuration.
+>
+> For portfolio demonstration, I primarily use the local version for instant demos. But I can also deploy to AWS with a single command to showcase cloud skills - the complete AWS infrastructure would cost $174K/month in production, but my optimized Free Tier implementation costs essentially nothing.
+>
+> The architecture uses Scala + Spark for type-safe distributed processing, with Airflow orchestrating the workflow. Data paths automatically switch between local filesystem and S3 based on deployment mode, demonstrating infrastructure portability and cost optimization strategies."
+
+**Technical Highlights to Mention:**
+- Dual-deployment architecture (local + AWS) with environment-based switching
+- Infrastructure as Code with CloudFormation
+- Type-safe data transformations with compile-time checks
+- Distributed processing with Spark partitioning
+- S3 integration for cloud-native data storage
+- Window functions for time-series analytics (SMA, EMA, volatility)
+- Data quality validation with configurable thresholds
+- IAM roles and security best practices
+- 99.998% cost reduction compared to full AWS production setup
+
+---
+
+## 📁 Project Structure
+
+```
+├── src/transformation/scala/      # Scala ETL logic
+│   └── FinancialDataTransform.scala
+├── scripts/                       # Data generation and deployment
+│   ├── data_generator.py         # Stock data generator
+│   ├── quick-demo.sh             # One-command demo
+│   └── build-and-submit.sh       # Build and submit Spark jobs
+├── dags/                          # Airflow DAG definitions
+│   └── financial_data_pipeline_scala.py
+├── docker-compose-spark.yml       # Docker environment
+├── build.sbt                      # Scala project configuration
+├── data/                          # Data storage
+│   ├── raw/                      # Raw JSON data
+│   ├── curated/                  # Processed Parquet data
+│   └── validation_reports/       # Data quality reports
+└── docs/                          # Additional documentation
+```
+
+---
+
+## 🔧 Key Features
+
+### Data Processing
+- **Type-Safe Transformations** - Scala case classes with schema enforcement
+- **Window Functions** - Moving averages, volatility calculations
+- **Data Quality** - Automated validation with Great Expectations
+- **Partitioning** - Date and symbol partitioning for efficient queries
+- **Compression** - Snappy-compressed Parquet for optimal storage
+
+### Orchestration
+- **Task Dependencies** - DAG-based workflow management
+- **Error Handling** - Automatic retries with exponential backoff
+- **Monitoring** - Task duration tracking and alerting
+- **Scalability** - Easily add new stocks or metrics
+
+### Data Generation
+- **Realistic Simulation** - Geometric Brownian Motion price modeling
+- **Corporate Actions** - Dividends and stock splits
+- **Market Conditions** - Configurable volatility and trends
+- **Multiple Formats** - JSON, CSV, Parquet output
+
+---
+
+## 🚢 Deployment Options
+
+### Option 1: Local Docker (Recommended for Portfolio)
+```bash
+# Set deployment mode
+export DEPLOYMENT_MODE=local
+
+# Quick demo
+./scripts/quick-demo.sh
+```
+
+**Advantages:**
+- ✅ $0 cost
+- ✅ No internet required
+- ✅ Instant startup
+- ✅ Full control
+
+### Option 2: AWS Free Tier (For Online Portfolio)
+```bash
+# Set deployment mode
+export DEPLOYMENT_MODE=aws
+
+# One-command deployment
+./scripts/deploy-to-aws.sh
+```
+
+**Advantages:**
+- ✅ $0-3/month cost
+- ✅ 24/7 availability
+- ✅ Public URL for sharing
+- ✅ Real cloud environment
+
+See [AWS_FREE_TIER_DEPLOYMENT.md](AWS_FREE_TIER_DEPLOYMENT.md) for detailed instructions.
+
+### Option 3: AWS Production (Optional)
+```bash
+# Full production deployment with Glue + Redshift
+cd infrastructure/cloudformation
+aws cloudformation create-stack --template-body file://main.yaml ...
+```
+
+**Cost:** $26K-174K/month (not recommended for portfolio)
+
+See [SCALA_SPARK_GUIDE.md](SCALA_SPARK_GUIDE.md) for detailed AWS production instructions.
+
+---
+
+## 📊 Sample Output
+
+### Data Quality Report
+```
+✅ AAPL: 65 records validated
+✅ GOOGL: 65 records validated
+✅ MSFT: 65 records validated
+✅ AMZN: 65 records validated
+✅ TSLA: 65 records validated
+
+Total: 325 records, 0 errors (100% pass rate)
+```
+
+### Fact Table Query
+```sql
+SELECT
+    symbol,
+    trade_date,
+    close_price,
+    sma_20,
+    daily_return,
+    volatility_20d
+FROM fact_stock_prices
+WHERE trade_date >= '2024-01-01'
+ORDER BY trade_date DESC, symbol
+LIMIT 5;
+```
+
+---
+
+## 🤝 Contributing
+
+This is a portfolio project, but suggestions and improvements are welcome!
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+---
+
+## 📞 Contact
+
+- **GitHub**: [@your-username](https://github.com/your-username)
+- **Email**: your.email@example.com
+- **LinkedIn**: [Your Name](https://linkedin.com/in/your-profile)
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- Alpha Vantage API for financial data structure reference
+- Apache Spark community for excellent documentation
+- Bitnami for Docker images
+
+---
+
+⭐ **If this helps you land your dream job, please give it a star!**
+
+Made with ❤️ for Data Engineering Job Seekers

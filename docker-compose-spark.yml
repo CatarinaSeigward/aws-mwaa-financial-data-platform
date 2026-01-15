@@ -1,0 +1,202 @@
+version: '3.8'
+
+# Scala + Spark 本地开发环境
+# 完全免费的替代 AWS Glue 方案
+#
+# 包含:
+# - Spark Master (1个)
+# - Spark Workers (2个)
+# - PostgreSQL (数据仓库)
+# - Airflow (编排)
+# - Grafana (监控)
+
+services:
+  # ============================================================================
+  # PostgreSQL - 替代 Redshift
+  # ============================================================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: financial-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: financial_dw
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - financial-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Spark Master
+  # ============================================================================
+  spark-master:
+    image: bitnami/spark:3.4.1
+    container_name: financial-spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_MASTER_WEBUI_PORT=8081
+    ports:
+      - "7077:7077"    # Spark Master
+      - "8081:8081"    # Spark UI
+    volumes:
+      - ./data:/data
+      - ./target/scala-2.12:/jars
+      - ./src/transformation/scala:/code
+    networks:
+      - financial-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================================================
+  # Spark Worker 1
+  # ============================================================================
+  spark-worker-1:
+    image: bitnami/spark:3.4.1
+    container_name: financial-spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./data:/data
+      - ./target/scala-2.12:/jars
+    networks:
+      - financial-net
+    depends_on:
+      - spark-master
+
+  # ============================================================================
+  # Spark Worker 2
+  # ============================================================================
+  spark-worker-2:
+    image: bitnami/spark:3.4.1
+    container_name: financial-spark-worker-2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./data:/data
+      - ./target/scala-2.12:/jars
+    networks:
+      - financial-net
+    depends_on:
+      - spark-master
+
+  # ============================================================================
+  # Airflow - 替代 AWS MWAA
+  # ============================================================================
+  airflow:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: financial-airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/financial_dw
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY}
+      SPARK_MASTER_URL: spark://spark-master:7077
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-none}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-none}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config
+      - ./data:/opt/airflow/data
+      - ./target/scala-2.12:/opt/airflow/jars
+      - airflow_logs:/opt/airflow/logs
+    ports:
+      - "8080:8080"
+    networks:
+      - financial-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      spark-master:
+        condition: service_healthy
+    command: >
+      bash -c "
+      pip install pyspark==3.4.1 &&
+      airflow db init &&
+      airflow users create \
+        --username admin \
+        --password admin \
+        --firstname Admin \
+        --lastname User \
+        --role Admin \
+        --email admin@example.com || true &&
+      airflow webserver &
+      airflow scheduler
+      "
+
+  # ============================================================================
+  # Grafana - 监控可视化
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: financial-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-postgresql-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - financial-net
+    depends_on:
+      - postgres
+
+  # ============================================================================
+  # MinIO - 本地S3替代 (可选)
+  # ============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: financial-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - financial-net
+
+volumes:
+  postgres_data:
+  airflow_logs:
+  grafana_data:
+  minio_data:
+
+networks:
+  financial-net:
+    driver: bridge
