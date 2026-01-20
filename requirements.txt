@@ -1,3 +1,6 @@
+# AWS MWAA Financial Data Platform Dependencies
+# ==============================================
+
 # Core
 boto3>=1.28.0
 botocore>=1.31.0

@@ -1,6 +1,6 @@
 # AWS Free Tier Deployment Guide
 
-## 🎯 Overview
+## Overview
 
 This guide shows how to deploy the Financial Data Platform on AWS using **Free Tier resources** to minimize costs while maintaining core functionality.
 
