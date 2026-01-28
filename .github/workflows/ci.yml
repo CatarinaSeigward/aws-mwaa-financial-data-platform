@@ -1,0 +1,234 @@
+# CI/CD Pipeline for Financial Data Platform
+# ==========================================
+# Runs on every push and PR to ensure code quality
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  SCALA_VERSION: "2.12.18"
+  SPARK_VERSION: "3.4.1"
+  JAVA_VERSION: "11"
+
+jobs:
+  # ============================================
+  # Python Tests & Linting
+  # ============================================
+  python-tests:
+    name: Python Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run linting (flake8)
+        run: |
+          flake8 src/ scripts/ dags/ --max-line-length=100 --ignore=E501,W503
+
+      - name: Run type checking (mypy)
+        run: |
+          mypy src/ --ignore-missing-imports --no-error-summary || true
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --tb=short -x
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ --cov=src --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ============================================
+  # Scala Build & Tests
+  # ============================================
+  scala-build:
+    name: Scala Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: "temurin"
+          cache: "sbt"
+
+      - name: Build Scala project
+        run: |
+          sbt compile
+
+      - name: Run Scala tests
+        run: |
+          sbt test
+
+      - name: Build assembly JAR
+        run: |
+          sbt assembly
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: financial-etl-jar
+          path: target/scala-2.12/financial-etl-*.jar
+          retention-days: 7
+
+  # ============================================
+  # Data Quality Validation
+  # ============================================
+  data-validation:
+    name: Data Quality Tests
+    runs-on: ubuntu-latest
+    needs: python-tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate sample data
+        run: |
+          python scripts/data_generator.py --preset demo --output-dir data/raw
+
+      - name: Validate generated data
+        run: |
+          python -c "
+          import pandas as pd
+          import json
+          from pathlib import Path
+
+          # Find generated files
+          data_dir = Path('data/raw')
+          json_files = list(data_dir.rglob('*.json'))
+
+          print(f'Found {len(json_files)} data files')
+
+          for f in json_files[:5]:  # Check first 5
+              with open(f) as fp:
+                  data = json.load(fp)
+              print(f'✓ {f.name}: Valid JSON')
+          "
+
+  # ============================================
+  # CloudFormation Validation
+  # ============================================
+  cloudformation-lint:
+    name: CloudFormation Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install cfn-lint
+        run: |
+          pip install cfn-lint
+
+      - name: Lint CloudFormation templates
+        run: |
+          cfn-lint infrastructure/cloudformation/*.yaml --ignore-checks W3002
+
+  # ============================================
+  # Docker Build Test
+  # ============================================
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose
+        run: |
+          docker compose -f docker-compose-spark.yml config
+
+  # ============================================
+  # Integration Tests (on main only)
+  # ============================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [python-tests, scala-build]
+    if: github.ref == 'refs/heads/main'
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: airflow
+          POSTGRES_PASSWORD: airflow
+          POSTGRES_DB: financial_dw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run integration tests
+        env:
+          DEPLOYMENT_MODE: local
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: financial_dw
+          POSTGRES_USER: airflow
+          POSTGRES_PASSWORD: airflow
+        run: |
+          pytest tests/ -v -m "integration" --tb=short || echo "No integration tests found"

@@ -1,24 +1,34 @@
 # Financial Data Platform - Scala + Spark ETL Pipeline
 
-🚀 **Enterprise-Grade Financial Data ETL Pipeline** - Scala + Spark for Large-Scale Data Processing
+[![CI Pipeline](https://github.com/your-username/aws-mwaa-financial-data-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/aws-mwaa-financial-data-platform/actions/workflows/ci.yml)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Scala 2.12](https://img.shields.io/badge/scala-2.12-red.svg)](https://www.scala-lang.org/)
+[![Spark 3.4](https://img.shields.io/badge/spark-3.4-orange.svg)](https://spark.apache.org/)
 
-**🎯 Perfect Portfolio Project for Job Seekers** - Run locally at zero cost, scalable to AWS production
-
----
-
-## 🌟 Project Highlights
-
-- **✅ Scala + Spark 3.4.1** - Type-safe distributed data processing
-- **✅ Zero-Cost Execution** - Docker local environment, no AWS required
-- **✅ No API Keys Needed** - Built-in data generator, 100% stable
-- **✅ 5-Minute Demo** - One-command full pipeline execution
-- **✅ Production-Ready** - Switch to AWS (Glue + Redshift) when needed
+**Enterprise-Grade Financial Data ETL Pipeline** - Scala + Spark for Time-Series Analytics
 
 ---
 
-## 🚀 Quick Start
+## Project Overview
 
-### Option 1: Local Docker (Default - $0/month)
+A production-ready ETL platform built with **Scala + Spark** for financial time-series processing. Features window functions for technical indicator calculations (SMA, EMA, volatility), adaptive shuffle partitions for optimized performance, and comprehensive data validation with Great Expectations.
+
+### Key Features
+
+- **Scala + Spark 3.4.1** - Type-safe Dataset API with compile-time checks
+- **Window Functions** - SMA, EMA, volatility calculations for time-series analytics
+- **Adaptive Query Execution** - Dynamic shuffle partition optimization
+- **Data Quality Gates** - Great Expectations integration with 17 validation rules
+- **Synthetic Data Engine** - Geometric Brownian Motion for realistic market simulation
+- **Dual Deployment** - Local Docker ($0) or AWS MWAA (managed Airflow)
+- **Infrastructure as Code** - CloudFormation templates for AWS resources
+- **CI/CD Pipeline** - GitHub Actions for automated testing and validation
+
+---
+
+## Quick Start
+
+### Option 1: Local Docker (Recommended for Demo)
 
 ```bash
 # 1. Generate sample data
@@ -35,288 +45,233 @@ docker-compose -f docker-compose-spark.yml up -d
 
 # 5. Query results
 docker exec -it financial-postgres psql -U airflow -d financial_dw \
-    -c "SELECT * FROM fact_stock_prices LIMIT 10;"
+    -c "SELECT symbol, trade_date, close_price, sma_20, volatility_20d FROM fact_stock_prices LIMIT 10;"
 ```
 
-**Or use the one-command demo:**
+**One-command demo:**
 ```bash
 ./scripts/quick-demo.sh
 ```
 
-### Option 2: AWS Free Tier ($0-3/month)
+### Option 2: AWS Deployment
 
 ```bash
-# 1. Configure AWS CLI
-aws configure
-
-# 2. Deploy to AWS with one command
-./scripts/deploy-to-aws.sh
-
-# 3. Access via public URL
-# Airflow: http://<PUBLIC_IP>:8080
-# Spark UI: http://<PUBLIC_IP>:8081
-```
-
-📖 **First time setup?** See [GETTING_STARTED.md](GETTING_STARTED.md) for local deployment or [AWS_FREE_TIER_DEPLOYMENT.md](AWS_FREE_TIER_DEPLOYMENT.md) for AWS deployment.
-
----
-
-## 💰 Cost Comparison
-
-| Solution | Monthly Cost | Deployment | Notes |
-|----------|--------------|------------|-------|
-| **Docker Local** | **$0** | Local machine | ✅ Best for interview demos |
-| **AWS Free Tier** | **$0-3** | EC2 + S3 | ✅ Best for online portfolio |
-| AWS Optimized | $26,150 | Full AWS | Production-ready |
-| AWS Original | $174,323 | Full AWS | ❌ Too expensive |
-
-**Savings: 99.998%** 💰 (AWS Free Tier vs AWS Original)
-
-Detailed analysis: [COST_ANALYSIS_SCALA.md](COST_ANALYSIS_SCALA.md)
-
----
-
-## 🛠️ Technology Stack
-
-### Core Technologies
-- **Scala 2.12** + **Spark 3.4.1** - Data processing engine
-- **Airflow 2.8.1** - Workflow orchestration
-- **PostgreSQL 15** - Data warehouse
-- **Docker** - Containerized deployment
-
-### AWS Technologies (Optional)
-- **EC2** - Compute instances (t2.micro Free Tier)
-- **S3** - Object storage for raw/processed data
-- **IAM** - Access management with instance profiles
-- **CloudFormation** - Infrastructure as Code
-- **CloudWatch** - Monitoring and logging
-
----
-
-## 📊 Data Acquisition
-
-### Method 1: Simulated Data Generation ✅ (Default)
-
-```bash
-python scripts/data_generator.py --preset demo
-```
-
-**Advantages:**
-- ✅ No API Key required
-- ✅ 100% stable
-- ✅ No rate limits
-- ✅ Realistic price movements using Geometric Brownian Motion
-
-### Method 2: Real API (Optional)
-
-```bash
-export ALPHA_VANTAGE_API_KEY="your_key"
-# Modify DAG to use fetch_stock_data_from_api()
-```
-
----
-
-## 📚 Documentation
-
-### Setup Guides
-- [Getting Started Guide](GETTING_STARTED.md) - Local Docker setup (step-by-step)
-- [AWS Free Tier Deployment](AWS_FREE_TIER_DEPLOYMENT.md) - AWS deployment guide
-- [AWS Deployment Summary](AWS_DEPLOYMENT_SUMMARY.md) - Quick AWS overview
-
-### Technical Documentation
-- [Scala + Spark Guide](SCALA_SPARK_GUIDE.md) - Implementation details
-- [Data Generation Guide](DATA_GENERATION_GUIDE.md) - Data generator usage
-- [Cost Analysis Report](COST_ANALYSIS_SCALA.md) - Detailed cost breakdown
-- [Environment Configuration](.env.example) - Configuration template
-
----
-
-## 🎯 Interview Presentation
-
-### 5-Minute Demo Flow
-
-1. Run `./scripts/quick-demo.sh`
-2. Show Spark UI (localhost:8081)
-3. Query PostgreSQL results
-4. Explain Scala code highlights
-
-### Key Talking Points
-
-> "This is an enterprise-grade ETL pipeline designed with a **dual-deployment architecture**. The same codebase supports both local Docker ($0/month) and AWS Free Tier ($0-3/month) deployments through environment-based configuration.
->
-> For portfolio demonstration, I primarily use the local version for instant demos. But I can also deploy to AWS with a single command to showcase cloud skills - the complete AWS infrastructure would cost $174K/month in production, but my optimized Free Tier implementation costs essentially nothing.
->
-> The architecture uses Scala + Spark for type-safe distributed processing, with Airflow orchestrating the workflow. Data paths automatically switch between local filesystem and S3 based on deployment mode, demonstrating infrastructure portability and cost optimization strategies."
-
-**Technical Highlights to Mention:**
-- Dual-deployment architecture (local + AWS) with environment-based switching
-- Infrastructure as Code with CloudFormation
-- Type-safe data transformations with compile-time checks
-- Distributed processing with Spark partitioning
-- S3 integration for cloud-native data storage
-- Window functions for time-series analytics (SMA, EMA, volatility)
-- Data quality validation with configurable thresholds
-- IAM roles and security best practices
-- 99.998% cost reduction compared to full AWS production setup
-
----
-
-## 📁 Project Structure
-
-```
-├── src/transformation/scala/      # Scala ETL logic
-│   └── FinancialDataTransform.scala
-├── scripts/                       # Data generation and deployment
-│   ├── data_generator.py         # Stock data generator
-│   ├── quick-demo.sh             # One-command demo
-│   └── build-and-submit.sh       # Build and submit Spark jobs
-├── dags/                          # Airflow DAG definitions
-│   └── financial_data_pipeline_scala.py
-├── docker-compose-spark.yml       # Docker environment
-├── build.sbt                      # Scala project configuration
-├── data/                          # Data storage
-│   ├── raw/                      # Raw JSON data
-│   ├── curated/                  # Processed Parquet data
-│   └── validation_reports/       # Data quality reports
-└── docs/                          # Additional documentation
-```
-
----
-
-## 🔧 Key Features
-
-### Data Processing
-- **Type-Safe Transformations** - Scala case classes with schema enforcement
-- **Window Functions** - Moving averages, volatility calculations
-- **Data Quality** - Automated validation with Great Expectations
-- **Partitioning** - Date and symbol partitioning for efficient queries
-- **Compression** - Snappy-compressed Parquet for optimal storage
-
-### Orchestration
-- **Task Dependencies** - DAG-based workflow management
-- **Error Handling** - Automatic retries with exponential backoff
-- **Monitoring** - Task duration tracking and alerting
-- **Scalability** - Easily add new stocks or metrics
-
-### Data Generation
-- **Realistic Simulation** - Geometric Brownian Motion price modeling
-- **Corporate Actions** - Dividends and stock splits
-- **Market Conditions** - Configurable volatility and trends
-- **Multiple Formats** - JSON, CSV, Parquet output
-
----
-
-## 🚢 Deployment Options
-
-### Option 1: Local Docker (Recommended for Portfolio)
-```bash
-# Set deployment mode
-export DEPLOYMENT_MODE=local
-
-# Quick demo
-./scripts/quick-demo.sh
-```
-
-**Advantages:**
-- ✅ $0 cost
-- ✅ No internet required
-- ✅ Instant startup
-- ✅ Full control
-
-### Option 2: AWS Free Tier (For Online Portfolio)
-```bash
-# Set deployment mode
-export DEPLOYMENT_MODE=aws
-
-# One-command deployment
+# Deploy infrastructure via CloudFormation
 ./scripts/deploy-to-aws.sh
 ```
 
-**Advantages:**
-- ✅ $0-3/month cost
-- ✅ 24/7 availability
-- ✅ Public URL for sharing
-- ✅ Real cloud environment
+---
 
-See [AWS_FREE_TIER_DEPLOYMENT.md](AWS_FREE_TIER_DEPLOYMENT.md) for detailed instructions.
+## Technology Stack
 
-### Option 3: AWS Production (Optional)
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Data Processing** | Scala 2.12 + Spark 3.4.1 | Type-safe ETL transformations |
+| **Orchestration** | Apache Airflow 2.8.1 | Workflow scheduling (MWAA compatible) |
+| **Data Warehouse** | PostgreSQL 15 / Redshift Serverless | Analytics storage |
+| **Data Quality** | Great Expectations 0.18+ | Validation with 17 rules |
+| **Data Generation** | Python + NumPy | Geometric Brownian Motion simulation |
+| **Infrastructure** | CloudFormation | AWS resource provisioning |
+| **CI/CD** | GitHub Actions | Automated testing pipeline |
+| **Containerization** | Docker Compose | Local development environment |
+
+---
+
+## Architecture
+
+```
+                    +------------------+
+                    |  Data Ingestion  |
+                    | (API / Generator)|
+                    +--------+---------+
+                             |
+                             v
+                    +------------------+
+                    | Great Expectations|
+                    |  Data Validation |
+                    +--------+---------+
+                             |
+                             v
++------------------+   +------------------+   +------------------+
+|   Spark Master   |-->| Scala ETL Job   |-->|  Curated Data    |
+|                  |   | (Window Funcs)  |   | (Parquet/S3)     |
++------------------+   +------------------+   +------------------+
+                             |
+                             v
+                    +------------------+
+                    |  Data Warehouse  |
+                    | (PostgreSQL/     |
+                    |  Redshift)       |
+                    +------------------+
+```
+
+---
+
+## Technical Highlights
+
+### Window Functions for Time-Series Analytics
+
+```scala
+// Simple Moving Average (SMA)
+val windowSpec = Window
+  .partitionBy("symbol")
+  .orderBy("trade_date")
+  .rowsBetween(-period + 1, 0)
+
+df.withColumn(s"sma_$period", avg("close_price").over(windowSpec))
+
+// Exponential Moving Average (EMA)
+// Volatility (20-day rolling standard deviation)
+// Daily returns and price ranges
+```
+
+### Adaptive Shuffle Partition Configuration
+
+```scala
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+spark.conf.set("spark.sql.shuffle.partitions", "200")
+```
+
+### Data Skew Handling
+
+The ETL implements salting strategy for high-volume symbols:
+- Analyzes symbol distribution to detect skew
+- Applies salt keys for hot symbols (e.g., AAPL, TSLA)
+- Redistributes data evenly across partitions
+
+### Great Expectations Validation Rules
+
+17 validation rules including:
+- Schema validation (required columns)
+- NULL checks for critical fields
+- Value range validation (prices, volumes)
+- OHLC integrity (high >= low)
+- Data freshness checks
+
+---
+
+## Project Structure
+
+```
+.
+├── src/
+│   ├── transformation/
+│   │   └── scala/
+│   │       └── FinancialDataTransform.scala  # Main Scala ETL
+│   └── validation/
+│       └── data_validator.py                 # Great Expectations
+├── tests/
+│   ├── test_data_validator.py               # Validation tests
+│   ├── test_data_generator.py               # Generator tests
+│   └── test_transformations.py              # Transform tests
+├── dags/
+│   └── financial_data_pipeline_scala.py     # Airflow DAG
+├── scripts/
+│   ├── data_generator.py                    # Synthetic data
+│   ├── quick-demo.sh                        # One-command demo
+│   └── build-and-submit.sh                  # Spark submit
+├── infrastructure/
+│   └── cloudformation/
+│       └── main.yaml                        # AWS resources
+├── config/
+│   ├── settings.py                          # Configuration
+│   └── expectations/
+│       └── stock_data_suite.json            # Validation rules
+├── .github/
+│   └── workflows/
+│       └── ci.yml                           # CI/CD pipeline
+├── docker-compose-spark.yml                 # Local environment
+├── build.sbt                                # Scala build config
+├── requirements.txt                         # Python dependencies
+└── pytest.ini                               # Test configuration
+```
+
+---
+
+## Running Tests
+
 ```bash
-# Full production deployment with Glue + Redshift
-cd infrastructure/cloudformation
-aws cloudformation create-stack --template-body file://main.yaml ...
-```
+# Run all Python tests
+pytest tests/ -v
 
-**Cost:** $26K-174K/month (not recommended for portfolio)
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
 
-See [SCALA_SPARK_GUIDE.md](SCALA_SPARK_GUIDE.md) for detailed AWS production instructions.
+# Run specific test file
+pytest tests/test_data_validator.py -v
 
----
-
-## 📊 Sample Output
-
-### Data Quality Report
-```
-✅ AAPL: 65 records validated
-✅ GOOGL: 65 records validated
-✅ MSFT: 65 records validated
-✅ AMZN: 65 records validated
-✅ TSLA: 65 records validated
-
-Total: 325 records, 0 errors (100% pass rate)
-```
-
-### Fact Table Query
-```sql
-SELECT
-    symbol,
-    trade_date,
-    close_price,
-    sma_20,
-    daily_return,
-    volatility_20d
-FROM fact_stock_prices
-WHERE trade_date >= '2024-01-01'
-ORDER BY trade_date DESC, symbol
-LIMIT 5;
+# Run Scala tests
+sbt test
 ```
 
 ---
 
-## 🤝 Contributing
+## Technical Indicators Calculated
 
-This is a portfolio project, but suggestions and improvements are welcome!
+| Indicator | Description | Window |
+|-----------|-------------|--------|
+| SMA_5 | Simple Moving Average | 5 days |
+| SMA_20 | Simple Moving Average | 20 days |
+| SMA_50 | Simple Moving Average | 50 days |
+| EMA_12 | Exponential Moving Average | 12 days |
+| EMA_26 | Exponential Moving Average | 26 days |
+| Volatility_20d | Rolling Standard Deviation | 20 days |
+| Daily_Return | Close-to-close % change | 1 day |
+| Daily_Range | High - Low | 1 day |
+| Volume_Change_Pct | Volume % change | 1 day |
+
+---
+
+## Interview Talking Points
+
+> "This ETL platform processes financial time-series data using **Scala + Spark** with the Dataset API for type-safe transformations. I implemented **window functions** for calculating technical indicators like moving averages and volatility.
+>
+> For performance optimization, I configured **adaptive shuffle partitions** and implemented a **data skew handling strategy** using salting for high-volume symbols like AAPL and TSLA.
+>
+> Data quality is enforced through **Great Expectations** with 17 validation rules that act as a gate before data enters the warehouse.
+>
+> The infrastructure is automated via **CloudFormation**, and the pipeline runs on **AWS MWAA** (managed Airflow) in production, with a Docker Compose setup for local development parity.
+>
+> The project includes a **CI/CD pipeline** with GitHub Actions that runs Python tests, builds the Scala JAR, validates CloudFormation templates, and checks data quality."
+
+---
+
+## Cost Analysis
+
+| Environment | Monthly Cost | Notes |
+|-------------|--------------|-------|
+| **Local Docker** | $0 | Development & demos |
+| **AWS Free Tier** | $0-3 | Portfolio hosting |
+| **AWS Production** | $26K+ | Enterprise scale |
+
+---
+
+## Documentation
+
+- [Getting Started Guide](GETTING_STARTED.md)
+- [Scala + Spark Guide](SCALA_SPARK_GUIDE.md)
+- [AWS Deployment](AWS_FREE_TIER_DEPLOYMENT.md)
+- [Data Generation Guide](DATA_GENERATION_GUIDE.md)
+- [Cost Analysis](COST_ANALYSIS_SCALA.md)
+
+---
+
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Run tests (`pytest tests/ && sbt test`)
+4. Commit changes (`git commit -m 'Add AmazingFeature'`)
+5. Push to branch (`git push origin feature/AmazingFeature`)
+6. Open Pull Request
 
 ---
 
-## 📞 Contact
+## License
 
-- **GitHub**: [@your-username](https://github.com/your-username)
-- **Email**: your.email@example.com
-- **LinkedIn**: [Your Name](https://linkedin.com/in/your-profile)
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- Alpha Vantage API for financial data structure reference
-- Apache Spark community for excellent documentation
-- Bitnami for Docker images
-
----
-
-⭐ **If this helps you land your dream job, please give it a star!**
-
-Made with ❤️ for Data Engineering Job Seekers
+**Built for Data Engineering interviews** | Scala + Spark + Airflow + AWS
