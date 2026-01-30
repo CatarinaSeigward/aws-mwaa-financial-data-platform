@@ -41,7 +41,7 @@ jobs:
 
       - name: Run linting (flake8)
         run: |
-          flake8 src/ scripts/ dags/ --max-line-length=100 --ignore=E501,W503,W293
+          flake8 src/ scripts/ dags/
 
       - name: Run type checking (mypy)
         run: |

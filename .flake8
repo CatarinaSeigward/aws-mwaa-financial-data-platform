@@ -1,0 +1,39 @@
+[flake8]
+# Line length
+max-line-length = 100
+
+# Ignore rules:
+# E501: line too long (handled by max-line-length)
+# W503: line break before binary operator (conflicts with W504)
+# W504: line break after binary operator
+# W291: trailing whitespace
+# W293: blank line contains whitespace
+# F401: imported but unused (common in __init__.py and for type hints)
+# F403: 'from module import *' used
+# F541: f-string without placeholders
+# E402: module level import not at top of file (needed for sys.path manipulation)
+# E226: missing whitespace around arithmetic operator
+# E128: continuation line under-indented
+ignore = E501,W503,W504,W291,W293,F401,F403,F541,E402,E226,E128
+
+# Exclude directories
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    .eggs,
+    *.egg,
+    build,
+    dist,
+    .tox,
+    .mypy_cache,
+    .pytest_cache,
+    node_modules
+
+# Per-file ignores
+per-file-ignores =
+    # Allow unused imports in __init__.py (for re-exports)
+    __init__.py: F401
+    # Glue transforms use star imports
+    src/transformation/glue_transform.py: F403
