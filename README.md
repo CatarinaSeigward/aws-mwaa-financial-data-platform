@@ -28,22 +28,22 @@ A production-ready ETL platform built with **Scala + Spark** for financial time-
 
 ## Quick Start
 
-### Option 1: Local Docker (Recommended for Demo)
+### Option 1: Local Docker 
 
 ```bash
-# 1. Generate sample data
+#Generate sample data
 python scripts/data_generator.py --preset demo
 
-# 2. Build Scala JAR
+#Build Scala JAR
 sbt assembly
 
-# 3. Start Docker environment
+#Start Docker environment
 docker-compose -f docker-compose-spark.yml up -d
 
-# 4. Run ETL pipeline
+#Run ETL pipeline
 ./scripts/build-and-submit.sh local
 
-# 5. Query results
+#Query results
 docker exec -it financial-postgres psql -U airflow -d financial_dw \
     -c "SELECT symbol, trade_date, close_price, sma_20, volatility_20d FROM fact_stock_prices LIMIT 10;"
 ```
@@ -220,20 +220,6 @@ sbt test
 | Daily_Return | Close-to-close % change | 1 day |
 | Daily_Range | High - Low | 1 day |
 | Volume_Change_Pct | Volume % change | 1 day |
-
----
-
-## Interview Talking Points
-
-> "This ETL platform processes financial time-series data using **Scala + Spark** with the Dataset API for type-safe transformations. I implemented **window functions** for calculating technical indicators like moving averages and volatility.
->
-> For performance optimization, I configured **adaptive shuffle partitions** and implemented a **data skew handling strategy** using salting for high-volume symbols like AAPL and TSLA.
->
-> Data quality is enforced through **Great Expectations** with 17 validation rules that act as a gate before data enters the warehouse.
->
-> The infrastructure is automated via **CloudFormation**, and the pipeline runs on **AWS MWAA** (managed Airflow) in production, with a Docker Compose setup for local development parity.
->
-> The project includes a **CI/CD pipeline** with GitHub Actions that runs Python tests, builds the Scala JAR, validates CloudFormation templates, and checks data quality."
 
 ---
 
