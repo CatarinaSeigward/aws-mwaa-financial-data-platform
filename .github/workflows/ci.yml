@@ -131,7 +131,7 @@ jobs:
 
       - name: Generate sample data
         run: |
-          python scripts/data_generator.py --preset demo --output-dir data/raw
+          python scripts/data_generator.py --preset demo --output data/raw
 
       - name: Validate generated data
         run: |
@@ -190,6 +190,122 @@ jobs:
       - name: Validate Docker Compose
         run: |
           docker compose -f docker-compose-spark.yml config
+
+  # ============================================
+  # Stress Test (pipeline reliability under load)
+  # ============================================
+  stress-test:
+    name: Stress Test
+    runs-on: ubuntu-latest
+    needs: [python-tests, scala-build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate large-scale stress test data
+        run: |
+          echo "=== Stress Test: Large-scale GBM data generation ==="
+          python scripts/data_generator.py \
+            --preset large \
+            --output data/stress_test \
+            --format json
+          echo "=== Verifying output volume ==="
+          TOTAL_FILES=$(find data/stress_test -name '*.json' | wc -l)
+          echo "Generated $TOTAL_FILES files"
+          if [ "$TOTAL_FILES" -lt 5 ]; then
+            echo "FAIL: Expected at least 5 data files for large preset"
+            exit 1
+          fi
+
+      - name: Validate data quality under volume
+        run: |
+          python -c "
+          import json, sys
+          from pathlib import Path
+
+          data_dir = Path('data/stress_test')
+          json_files = sorted(data_dir.rglob('*.json'))
+
+          print(f'Validating {len(json_files)} files...')
+
+          total_records = 0
+          errors = []
+
+          for f in json_files:
+              with open(f) as fp:
+                  data = json.load(fp)
+              records = data.get('data', [])
+              total_records += len(records)
+
+              for i, rec in enumerate(records):
+                  # Validate OHLC integrity
+                  h, l = rec.get('high_price', 0), rec.get('low_price', 0)
+                  o, c = rec.get('open_price', 0), rec.get('close_price', 0)
+                  if h < l:
+                      errors.append(f'{f.name}[{i}]: high ({h}) < low ({l})')
+                  if o < 0 or c < 0 or h < 0 or l < 0:
+                      errors.append(f'{f.name}[{i}]: negative price')
+                  # Validate GBM property: prices must be strictly positive
+                  if c <= 0:
+                      errors.append(f'{f.name}[{i}]: non-positive close price')
+
+          print(f'Total records validated: {total_records:,}')
+          print(f'Validation errors: {len(errors)}')
+
+          if total_records < 1000:
+              print(f'FAIL: Expected 1000+ records for stress test, got {total_records}')
+              sys.exit(1)
+
+          if errors:
+              for e in errors[:10]:
+                  print(f'  ERROR: {e}')
+              sys.exit(1)
+
+          print('PASS: All stress test validations passed')
+          "
+
+      - name: Run Great Expectations validation on stress data
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from validation.data_validator import DataValidator
+
+          validator = DataValidator()
+
+          import json
+          from pathlib import Path
+          import pandas as pd
+
+          # Collect all stress test records
+          records = []
+          for f in Path('data/stress_test').rglob('*.json'):
+              with open(f) as fp:
+                  data = json.load(fp)
+              records.extend(data.get('data', []))
+
+          df = pd.DataFrame(records)
+          print(f'Validating {len(df)} records with Great Expectations suite...')
+
+          result = validator.validate(df)
+          if not result.get('success', False):
+              print('WARN: GX validation reported issues (non-blocking in stress test)')
+              print(f'  Details: {result.get(\"statistics\", {})}')
+          else:
+              print('PASS: Great Expectations validation succeeded')
+          " || echo "Great Expectations validation completed (non-blocking)"
 
   # ============================================
   # Integration Tests (on main only)
