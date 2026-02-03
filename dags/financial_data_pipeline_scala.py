@@ -458,7 +458,7 @@ def load_to_postgres(**context):
         )
         print(f"Loaded {rows_loaded} rows to PostgreSQL (fallback mode)")
 
-    except Exception as e:
+    except Exception:
         if 'conn' in locals():
             conn.rollback()
         raise
