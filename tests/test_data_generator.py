@@ -101,7 +101,37 @@ class TestSyntheticDataGeneration:
 
 
 class TestGeometricBrownianMotion:
-    """Test the Geometric Brownian Motion price simulation."""
+    """Test the Geometric Brownian Motion price simulation properties."""
+
+    def test_log_returns_are_approximately_normal(self, sample_stock_data: pd.DataFrame):
+        """
+        GBM implies log-returns ln(S(t+1)/S(t)) are normally distributed.
+        Validate that log-returns are not heavily skewed (basic normality check).
+        """
+        for symbol in sample_stock_data["symbol"].unique():
+            symbol_data = sample_stock_data[
+                sample_stock_data["symbol"] == symbol
+            ].copy()
+            symbol_data = symbol_data.sort_values("timestamp")
+
+            prices = symbol_data["close_price"].values
+            if len(prices) < 10:
+                continue
+
+            # Compute log-returns: ln(S(t+1) / S(t))
+            log_returns = np.diff(np.log(prices))
+
+            # Skewness should be roughly symmetric (within [-2, 2] for small samples)
+            skewness = float(pd.Series(log_returns).skew())
+            assert abs(skewness) < 2.0, \
+                f"Log-returns for {symbol} are too skewed: {skewness:.2f}"
+
+    def test_prices_remain_positive(self, sample_stock_data: pd.DataFrame):
+        """GBM guarantees strictly positive prices (log-normal distribution)."""
+        for col in ["open_price", "high_price", "low_price", "close_price"]:
+            values = sample_stock_data[col].dropna()
+            assert (values > 0).all(), \
+                f"GBM should produce strictly positive prices, found non-positive in {col}"
 
     def test_price_volatility_is_reasonable(self, sample_stock_data: pd.DataFrame):
         """Test that price changes follow reasonable volatility patterns."""
@@ -111,11 +141,9 @@ class TestGeometricBrownianMotion:
             ].copy()
             symbol_data = symbol_data.sort_values("timestamp")
 
-            # Calculate daily returns
             returns = symbol_data["close_price"].pct_change().dropna()
 
             if len(returns) > 0:
-                # Daily volatility should be reasonable (< 50% per day)
                 max_return = returns.abs().max()
                 assert max_return < 0.5, \
                     f"Unrealistic daily return for {symbol}: {max_return:.2%}"
@@ -132,7 +160,6 @@ class TestGeometricBrownianMotion:
 
             for i in range(1, len(prices)):
                 change_pct = abs(prices[i] - prices[i-1]) / prices[i-1]
-                # No more than 20% jump in a single day (circuit breaker level)
                 assert change_pct < 0.20, \
                     f"Unrealistic price jump for {symbol}: {change_pct:.2%}"
 

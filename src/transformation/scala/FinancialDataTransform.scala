@@ -1,11 +1,12 @@
 package com.financial.etl.transform
 
-import org.apache.spark.sql.{DataFrame, SparkSession, SaveMode}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession, SaveMode, Encoder, Encoders}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.types._
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.sql.{Date, Timestamp}
 
 /**
  * Financial Data ETL Transformation
@@ -13,7 +14,7 @@ import java.time.format.DateTimeFormatter
  * Scala + Spark implementation for production-grade financial time-series processing
  *
  * Features:
- * - Pure Scala implementation with Dataset API (type-safe)
+ * - Pure Scala implementation with typed Dataset API (compile-time type safety)
  * - Window functions for time-series analytics (SMA, EMA, volatility)
  * - Adaptive shuffle partitions for optimized performance
  * - Data skew handling strategies (salting, broadcast hints)
@@ -21,6 +22,7 @@ import java.time.format.DateTimeFormatter
  *
  * Technical Highlights:
  * - Leverages Spark AQE (Adaptive Query Execution) for dynamic optimization
+ * - Uses typed Dataset[StockRecord] and Dataset[EnrichedStockRecord] throughout pipeline
  * - Implements salted joins for skewed symbol distributions
  * - Uses broadcast hints for dimension lookups
  * - Configurable partition strategies for different data volumes
@@ -34,6 +36,72 @@ import java.time.format.DateTimeFormatter
  *     --execution-date 2024-01-15
  */
 object FinancialDataTransform {
+
+  // ============================================================================
+  // Typed case classes for Dataset API (compile-time type safety)
+  // ============================================================================
+
+  /** Raw stock record as ingested from JSON source */
+  case class StockRecord(
+    symbol: String,
+    timestamp: String,
+    open_price: Option[Double],
+    high_price: Option[Double],
+    low_price: Option[Double],
+    close_price: Option[Double],
+    adjusted_close: Option[Double],
+    volume: Option[Long],
+    dividend_amount: Option[Double],
+    split_coefficient: Option[Double],
+    source_file: Option[String]
+  )
+
+  /** Cleansed record with validated and standardized fields */
+  case class CleansedRecord(
+    symbol: String,
+    timestamp: String,
+    open_price: Option[Double],
+    high_price: Option[Double],
+    low_price: Option[Double],
+    close_price: Option[Double],
+    adjusted_close: Option[Double],
+    volume: Long,
+    dividend_amount: Double,
+    split_coefficient: Double,
+    source_file: Option[String]
+  )
+
+  /** Fully enriched record with technical indicators and date dimensions */
+  case class EnrichedStockRecord(
+    price_id: String,
+    symbol: String,
+    trade_date: Date,
+    trade_timestamp: Timestamp,
+    open_price: Option[Double],
+    high_price: Option[Double],
+    low_price: Option[Double],
+    close_price: Option[Double],
+    adjusted_close: Option[Double],
+    volume: Long,
+    dividend_amount: Double,
+    split_coefficient: Double,
+    daily_return: Option[Double],
+    daily_range: Option[Double],
+    daily_range_pct: Option[Double],
+    volume_change_pct: Option[Double],
+    sma_5: Option[Double],
+    sma_20: Option[Double],
+    sma_50: Option[Double],
+    ema_12: Option[Double],
+    ema_26: Option[Double],
+    volatility_20d: Option[Double],
+    year: Int,
+    quarter: Int,
+    month: Int,
+    day: Int,
+    day_of_week: Int,
+    processing_timestamp: Timestamp
+  )
 
   // Configuration case class
   case class TransformConfig(
@@ -53,58 +121,6 @@ object FinancialDataTransform {
     val SALT_RANGE: Int = 10
     // Symbols known to have high data volumes (e.g., AAPL, TSLA)
     val HOT_SYMBOLS: Set[String] = Set("AAPL", "TSLA", "NVDA", "AMD", "SPY", "QQQ")
-  }
-
-  // Schema definitions
-  object Schemas {
-    val rawSchema: StructType = StructType(Array(
-      StructField("symbol", StringType, nullable = false),
-      StructField("timestamp", StringType, nullable = false),
-      StructField("open_price", DoubleType, nullable = true),
-      StructField("high_price", DoubleType, nullable = true),
-      StructField("low_price", DoubleType, nullable = true),
-      StructField("close_price", DoubleType, nullable = true),
-      StructField("adjusted_close", DoubleType, nullable = true),
-      StructField("volume", LongType, nullable = true),
-      StructField("dividend_amount", DoubleType, nullable = true),
-      StructField("split_coefficient", DoubleType, nullable = true)
-    ))
-
-    val factSchema: StructType = StructType(Array(
-      StructField("price_id", StringType, nullable = false),
-      StructField("symbol", StringType, nullable = false),
-      StructField("trade_date", DateType, nullable = false),
-      StructField("trade_timestamp", TimestampType, nullable = true),
-      StructField("open_price", DoubleType, nullable = true),
-      StructField("high_price", DoubleType, nullable = true),
-      StructField("low_price", DoubleType, nullable = true),
-      StructField("close_price", DoubleType, nullable = true),
-      StructField("adjusted_close", DoubleType, nullable = true),
-      StructField("volume", LongType, nullable = true),
-      StructField("dividend_amount", DoubleType, nullable = true),
-      StructField("split_coefficient", DoubleType, nullable = true),
-      // Derived metrics
-      StructField("daily_return", DoubleType, nullable = true),
-      StructField("daily_range", DoubleType, nullable = true),
-      StructField("daily_range_pct", DoubleType, nullable = true),
-      StructField("volume_change_pct", DoubleType, nullable = true),
-      // Technical indicators
-      StructField("sma_5", DoubleType, nullable = true),
-      StructField("sma_20", DoubleType, nullable = true),
-      StructField("sma_50", DoubleType, nullable = true),
-      StructField("ema_12", DoubleType, nullable = true),
-      StructField("ema_26", DoubleType, nullable = true),
-      StructField("volatility_20d", DoubleType, nullable = true),
-      // Date dimensions
-      StructField("year", IntegerType, nullable = true),
-      StructField("quarter", IntegerType, nullable = true),
-      StructField("month", IntegerType, nullable = true),
-      StructField("day", IntegerType, nullable = true),
-      StructField("day_of_week", IntegerType, nullable = true),
-      // Metadata
-      StructField("processing_timestamp", TimestampType, nullable = true),
-      StructField("source_file", StringType, nullable = true)
-    ))
   }
 
   /**
@@ -152,12 +168,12 @@ object FinancialDataTransform {
       val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
 
       println("=" * 70)
-      println(s"✅ TRANSFORMATION COMPLETE in ${elapsed}s")
+      println(s"TRANSFORMATION COMPLETE in ${elapsed}s")
       println("=" * 70)
 
     } catch {
       case e: Exception =>
-        println(s"❌ ERROR: Transformation failed - ${e.getMessage}")
+        println(s"ERROR: Transformation failed - ${e.getMessage}")
         e.printStackTrace()
         System.exit(1)
     } finally {
@@ -186,69 +202,56 @@ object FinancialDataTransform {
   }
 
   /**
-   * Main transformation pipeline
+   * Main transformation pipeline using typed Dataset API
    */
   def runTransformation(spark: SparkSession, config: TransformConfig): Unit = {
     import spark.implicits._
 
-    // Step 1: Read raw data
-    println("📖 Step 1: Reading raw data...")
-    val rawDf = readRawData(spark, config.sourcePath, config.executionDate)
-    println(s"   Loaded ${rawDf.count()} records")
+    // Step 1: Read raw data into typed Dataset[StockRecord]
+    println("Step 1: Reading raw data into Dataset[StockRecord]...")
+    val rawDs: Dataset[StockRecord] = readRawData(spark, config.sourcePath, config.executionDate)
+    println(s"   Loaded ${rawDs.count()} records")
 
-    if (rawDf.isEmpty) {
-      println("⚠️  WARNING: No data found for processing")
+    if (rawDs.isEmpty) {
+      println("WARNING: No data found for processing")
       return
     }
 
-    // Step 2: Cleanse data
-    println("🧹 Step 2: Cleansing data...")
-    val cleansedDf = cleanseData(rawDf)
-    println(s"   ${cleansedDf.count()} records after cleansing")
+    // Step 2: Cleanse data -> Dataset[CleansedRecord]
+    println("Step 2: Cleansing data...")
+    val cleansedDs: Dataset[CleansedRecord] = cleanseData(rawDs)(spark)
+    println(s"   ${cleansedDs.count()} records after cleansing")
 
     // Step 2.5: Handle data skew for high-volume symbols
-    println("⚖️  Step 2.5: Analyzing and handling data skew...")
-    val (skewHandledDf, skewReport) = handleDataSkew(cleansedDf, config.enableSkewHandling)
+    println("Step 2.5: Analyzing and handling data skew...")
+    val (skewHandledDf, skewReport) = handleDataSkew(cleansedDs.toDF(), config.enableSkewHandling)
     println(skewReport)
 
-    // Step 3: Standardize dates
-    println("📅 Step 3: Standardizing dates...")
-    val datedDf = standardizeDates(skewHandledDf)
+    // Step 3: Enrich with technical indicators and date dimensions -> Dataset[EnrichedStockRecord]
+    println("Step 3: Enriching with technical indicators and dimensions...")
+    val enrichedDs: Dataset[EnrichedStockRecord] = enrichData(skewHandledDf)(spark)
+    println(s"   ${enrichedDs.count()} enriched records")
 
-    // Step 4: Add technical indicators
-    println("📊 Step 4: Calculating technical indicators...")
-    val enrichedDf = addTechnicalIndicators(datedDf)
-
-    // Step 5: Add date dimensions
-    println("📅 Step 5: Adding date dimensions...")
-    val dimensionalDf = addDateDimensions(enrichedDf)
-
-    // Step 6: Add metadata
-    println("🏷️  Step 6: Adding metadata...")
-    val finalDf = addMetadata(dimensionalDf)
-
-    // Step 7: Select final columns
-    println("✂️  Step 7: Selecting final columns...")
-    val outputDf = selectFinalColumns(finalDf)
-
-    // Step 8: Show sample data
-    println("\n📋 Sample transformed data:")
-    outputDf.select("symbol", "trade_date", "close_price", "sma_20", "daily_return")
+    // Step 4: Show sample data
+    println("\nSample transformed data:")
+    enrichedDs.select("symbol", "trade_date", "close_price", "sma_20", "daily_return")
       .show(5, truncate = false)
 
-    // Step 9: Write to curated layer (partitioned)
-    println("💾 Step 8: Writing to curated layer...")
-    writeToCurated(outputDf, config.targetPath, config.partitionCols)
+    // Step 5: Write to curated layer (partitioned)
+    println("Step 5: Writing to curated layer...")
+    writeToCurated(enrichedDs, config.targetPath, config.partitionCols)
 
-    // Step 10: Write daily snapshot (for Redshift)
-    println("💾 Step 9: Writing daily snapshot...")
-    writeDailySnapshot(outputDf, config.targetPath, config.executionDate)
+    // Step 6: Write daily snapshot (for Redshift)
+    println("Step 6: Writing daily snapshot...")
+    writeDailySnapshot(enrichedDs, config.targetPath, config.executionDate)
   }
 
   /**
-   * Read raw JSON data from partitioned S3 structure
+   * Read raw JSON data into typed Dataset[StockRecord]
    */
-  def readRawData(spark: SparkSession, basePath: String, executionDate: String): DataFrame = {
+  def readRawData(spark: SparkSession, basePath: String, executionDate: String): Dataset[StockRecord] = {
+    import spark.implicits._
+
     val partitionPath = s"$basePath/stock_data/date=$executionDate/"
 
     spark.read
@@ -256,44 +259,57 @@ object FinancialDataTransform {
       .option("mode", "PERMISSIVE")
       .json(s"$partitionPath*/")
       .withColumn("source_file", input_file_name())
+      // Project to match StockRecord schema before converting to Dataset
+      .select(
+        col("symbol").cast(StringType).as("symbol"),
+        col("timestamp").cast(StringType).as("timestamp"),
+        col("open_price").cast(DoubleType).as("open_price"),
+        col("high_price").cast(DoubleType).as("high_price"),
+        col("low_price").cast(DoubleType).as("low_price"),
+        col("close_price").cast(DoubleType).as("close_price"),
+        col("adjusted_close").cast(DoubleType).as("adjusted_close"),
+        col("volume").cast(LongType).as("volume"),
+        col("dividend_amount").cast(DoubleType).as("dividend_amount"),
+        col("split_coefficient").cast(DoubleType).as("split_coefficient"),
+        col("source_file").cast(StringType).as("source_file")
+      )
+      .as[StockRecord]
   }
 
   /**
-   * Data cleansing with validation rules
+   * Data cleansing: Dataset[StockRecord] -> Dataset[CleansedRecord]
+   * Type-safe transformation with compile-time checked field access
    */
-  def cleanseData(df: DataFrame): DataFrame = {
-    df
-      // Remove null symbols and timestamps
-      .filter(col("symbol").isNotNull && col("timestamp").isNotNull)
+  def cleanseData(ds: Dataset[StockRecord])(implicit spark: SparkSession): Dataset[CleansedRecord] = {
+    import spark.implicits._
 
-      // Standardize symbol format
-      .withColumn("symbol", upper(trim(col("symbol"))))
-
-      // Handle negative prices (set to null)
-      .withColumn("open_price",
-        when(col("open_price") < 0, null).otherwise(col("open_price")))
-      .withColumn("high_price",
-        when(col("high_price") < 0, null).otherwise(col("high_price")))
-      .withColumn("low_price",
-        when(col("low_price") < 0, null).otherwise(col("low_price")))
-      .withColumn("close_price",
-        when(col("close_price") < 0, null).otherwise(col("close_price")))
-      .withColumn("adjusted_close",
-        when(col("adjusted_close") < 0, null).otherwise(col("adjusted_close")))
-
-      // Fill null volumes and dividends
-      .withColumn("volume", coalesce(col("volume"), lit(0L)))
-      .withColumn("dividend_amount", coalesce(col("dividend_amount"), lit(0.0)))
-      .withColumn("split_coefficient", coalesce(col("split_coefficient"), lit(1.0)))
-
-      // Validate OHLC integrity: high >= low
-      .filter(
-        col("high_price").isNull ||
-        col("low_price").isNull ||
-        col("high_price") >= col("low_price")
-      )
-
-      // Remove duplicates
+    ds
+      // Type-safe filter: remove null symbols and timestamps
+      .filter(r => r.symbol != null && r.timestamp != null)
+      // Type-safe map: standardize and cleanse fields
+      .map { r =>
+        CleansedRecord(
+          symbol = r.symbol.trim.toUpperCase,
+          timestamp = r.timestamp,
+          open_price = r.open_price.filter(_ >= 0),
+          high_price = r.high_price.filter(_ >= 0),
+          low_price = r.low_price.filter(_ >= 0),
+          close_price = r.close_price.filter(_ >= 0),
+          adjusted_close = r.adjusted_close.filter(_ >= 0),
+          volume = r.volume.getOrElse(0L),
+          dividend_amount = r.dividend_amount.getOrElse(0.0),
+          split_coefficient = r.split_coefficient.getOrElse(1.0),
+          source_file = r.source_file
+        )
+      }
+      // Validate OHLC integrity: high >= low (when both present)
+      .filter { r =>
+        (r.high_price, r.low_price) match {
+          case (Some(h), Some(l)) => h >= l
+          case _ => true
+        }
+      }
+      // Remove duplicates by (symbol, timestamp)
       .dropDuplicates("symbol", "timestamp")
   }
 
@@ -344,7 +360,7 @@ object FinancialDataTransform {
 
     // Apply salting if skew is significant
     val resultDf = if (skewRatio > 3.0 && hotSymbols.nonEmpty) {
-      report.append(s"   ⚠️  Detected skew (ratio > 3.0), applying salting strategy\n")
+      report.append(s"   Detected skew (ratio > 3.0), applying salting strategy\n")
       report.append(s"     - Hot symbols: ${hotSymbols.mkString(", ")}\n")
 
       // Add salt column for hot symbols
@@ -358,7 +374,7 @@ object FinancialDataTransform {
       // Repartition by salted key for better distribution
       saltedDf.repartition(col("partition_salt"))
     } else {
-      report.append(s"   ✅ Data distribution is balanced, no salting needed\n")
+      report.append(s"   Data distribution is balanced, no salting needed\n")
       df.withColumn("partition_salt", col("symbol"))
     }
 
@@ -366,22 +382,22 @@ object FinancialDataTransform {
   }
 
   /**
-   * Standardize date and timestamp columns
+   * Enrich cleansed data with technical indicators and date dimensions.
+   * Produces typed Dataset[EnrichedStockRecord] from DataFrame.
+   *
+   * Window-function calculations must happen at DataFrame level (Spark limitation),
+   * then the result is converted to the typed Dataset[EnrichedStockRecord].
    */
-  def standardizeDates(df: DataFrame): DataFrame = {
-    df
+  def enrichData(df: DataFrame)(implicit spark: SparkSession): Dataset[EnrichedStockRecord] = {
+    import spark.implicits._
+
+    // Standardize dates
+    var result = df
       .withColumn("trade_date", to_date(col("timestamp")))
       .withColumn("trade_timestamp", to_timestamp(col("timestamp")))
       .filter(col("trade_date").isNotNull)
-  }
 
-  /**
-   * Calculate all technical indicators
-   */
-  def addTechnicalIndicators(df: DataFrame): DataFrame = {
-    var result = df
-
-    // Calculate derived metrics
+    // Calculate derived metrics (daily return, range, volume change)
     result = calculateDerivedMetrics(result)
 
     // Calculate moving averages
@@ -394,7 +410,55 @@ object FinancialDataTransform {
     // Calculate volatility
     result = calculateVolatility(result, 20)
 
-    result
+    // Add date dimensions
+    result = result
+      .withColumn("year", year(col("trade_date")))
+      .withColumn("quarter", quarter(col("trade_date")))
+      .withColumn("month", month(col("trade_date")))
+      .withColumn("day", dayofmonth(col("trade_date")))
+      .withColumn("day_of_week", dayofweek(col("trade_date")))
+
+    // Add metadata
+    result = result
+      .withColumn("processing_timestamp", current_timestamp())
+      .withColumn("price_id",
+        concat_ws("_",
+          col("symbol"),
+          date_format(col("trade_date"), "yyyyMMdd")
+        )
+      )
+
+    // Project to EnrichedStockRecord schema and convert to typed Dataset
+    result.select(
+      col("price_id"),
+      col("symbol"),
+      col("trade_date"),
+      col("trade_timestamp"),
+      col("open_price"),
+      col("high_price"),
+      col("low_price"),
+      col("close_price"),
+      col("adjusted_close"),
+      col("volume"),
+      col("dividend_amount"),
+      col("split_coefficient"),
+      col("daily_return"),
+      col("daily_range"),
+      col("daily_range_pct"),
+      col("volume_change_pct"),
+      col("sma_5"),
+      col("sma_20"),
+      col("sma_50"),
+      col("ema_12"),
+      col("ema_26"),
+      col("volatility_20d"),
+      col("year"),
+      col("quarter"),
+      col("month"),
+      col("day"),
+      col("day_of_week"),
+      col("processing_timestamp")
+    ).as[EnrichedStockRecord]
   }
 
   /**
@@ -491,106 +555,39 @@ object FinancialDataTransform {
   }
 
   /**
-   * Add date dimension columns
-   */
-  def addDateDimensions(df: DataFrame): DataFrame = {
-    df
-      .withColumn("year", year(col("trade_date")))
-      .withColumn("quarter", quarter(col("trade_date")))
-      .withColumn("month", month(col("trade_date")))
-      .withColumn("day", dayofmonth(col("trade_date")))
-      .withColumn("day_of_week", dayofweek(col("trade_date")))
-  }
-
-  /**
-   * Add processing metadata
-   */
-  def addMetadata(df: DataFrame): DataFrame = {
-    df
-      .withColumn("processing_timestamp", current_timestamp())
-      .withColumn("price_id",
-        concat_ws("_",
-          col("symbol"),
-          date_format(col("trade_date"), "yyyyMMdd")
-        )
-      )
-  }
-
-  /**
-   * Select final columns in the correct order
-   */
-  def selectFinalColumns(df: DataFrame): DataFrame = {
-    val finalColumns = Seq(
-      "price_id",
-      "symbol",
-      "trade_date",
-      "trade_timestamp",
-      "open_price",
-      "high_price",
-      "low_price",
-      "close_price",
-      "adjusted_close",
-      "volume",
-      "dividend_amount",
-      "split_coefficient",
-      "daily_return",
-      "daily_range",
-      "daily_range_pct",
-      "volume_change_pct",
-      "sma_5",
-      "sma_20",
-      "sma_50",
-      "ema_12",
-      "ema_26",
-      "volatility_20d",
-      "year",
-      "quarter",
-      "month",
-      "day",
-      "day_of_week",
-      "processing_timestamp"
-    )
-
-    // Select only existing columns (excluding internal columns like partition_salt)
-    val internalColumns = Set("partition_salt", "prev_close", "prev_volume")
-    val availableColumns = finalColumns.filter(c => df.columns.contains(c) && !internalColumns.contains(c))
-    df.select(availableColumns.map(col): _*)
-  }
-
-  /**
-   * Write to curated layer with partitioning
+   * Write typed Dataset[EnrichedStockRecord] to curated layer with partitioning
    */
   def writeToCurated(
-    df: DataFrame,
+    ds: Dataset[EnrichedStockRecord],
     targetPath: String,
     partitionCols: Seq[String]
   ): Unit = {
     val curatedPath = s"$targetPath/processed/"
 
-    df.write
+    ds.write
       .mode(SaveMode.Overwrite)
       .partitionBy(partitionCols: _*)
       .parquet(curatedPath)
 
-    println(s"   ✅ Written to $curatedPath (partitioned)")
+    println(s"   Written to $curatedPath (partitioned)")
   }
 
   /**
-   * Write daily snapshot (single file for Redshift COPY)
+   * Write daily snapshot of typed Dataset (single file for Redshift COPY)
    */
   def writeDailySnapshot(
-    df: DataFrame,
+    ds: Dataset[EnrichedStockRecord],
     targetPath: String,
     executionDate: String
   ): Unit = {
     val snapshotPath = s"$targetPath/daily_snapshots/date=$executionDate/"
 
-    df.coalesce(1)
+    ds.coalesce(1)
       .write
       .mode(SaveMode.Overwrite)
       .parquet(snapshotPath)
 
-    println(s"   ✅ Daily snapshot written to $snapshotPath")
+    println(s"   Daily snapshot written to $snapshotPath")
   }
 }
 
@@ -600,16 +597,16 @@ object FinancialDataTransform {
 object TransformUtils {
 
   /**
-   * Calculate statistics for a DataFrame
+   * Calculate statistics for a Dataset
    */
-  def printDataStats(df: DataFrame, label: String): Unit = {
-    import df.sparkSession.implicits._
+  def printDataStats(ds: Dataset[FinancialDataTransform.EnrichedStockRecord], label: String): Unit = {
+    import ds.sparkSession.implicits._
 
-    println(s"\n📊 Statistics for: $label")
-    println(s"   Total records: ${df.count()}")
-    println(s"   Unique symbols: ${df.select("symbol").distinct().count()}")
+    println(s"\nStatistics for: $label")
+    println(s"   Total records: ${ds.count()}")
+    println(s"   Unique symbols: ${ds.map(_.symbol).distinct().count()}")
 
-    val dateRange = df.agg(
+    val dateRange = ds.toDF().agg(
       min("trade_date").as("min_date"),
       max("trade_date").as("max_date")
     ).first()
@@ -618,31 +615,26 @@ object TransformUtils {
   }
 
   /**
-   * Validate data quality
+   * Validate data quality on typed Dataset
    */
-  def validateDataQuality(df: DataFrame): Boolean = {
-    // Check for null symbols
-    val nullSymbols = df.filter(col("symbol").isNull).count()
-    if (nullSymbols > 0) {
-      println(s"⚠️  WARNING: Found $nullSymbols records with null symbols")
-      return false
-    }
+  def validateDataQuality(ds: Dataset[FinancialDataTransform.EnrichedStockRecord]): Boolean = {
+    import ds.sparkSession.implicits._
 
-    // Check for null close prices
-    val nullPrices = df.filter(col("close_price").isNull).count()
+    // Type-safe null check on close prices
+    val nullPrices = ds.filter(_.close_price.isEmpty).count()
     if (nullPrices > 0) {
-      println(s"⚠️  WARNING: Found $nullPrices records with null close prices")
+      println(s"WARNING: Found $nullPrices records with null close prices")
       return false
     }
 
-    // Check for negative prices
-    val negativePrices = df.filter(col("close_price") < 0).count()
+    // Type-safe negative price check
+    val negativePrices = ds.filter(r => r.close_price.exists(_ < 0)).count()
     if (negativePrices > 0) {
-      println(s"⚠️  WARNING: Found $negativePrices records with negative prices")
+      println(s"WARNING: Found $negativePrices records with negative prices")
       return false
     }
 
-    println("✅ Data quality validation passed")
+    println("Data quality validation passed")
     true
   }
 }

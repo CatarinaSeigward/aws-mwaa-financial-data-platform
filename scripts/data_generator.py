@@ -2,31 +2,40 @@
 """
 Enhanced Data Generator for Financial Data Pipeline
 ===================================================
-生成高质量、可配置的模拟股票数据
+Geometric Brownian Motion (GBM) based market simulator for generating
+high-quality, configurable synthetic stock data.
+
+The price process follows the SDE:
+    dS = mu * S * dt + sigma * S * dW
+
+With closed-form solution:
+    S(t+dt) = S(t) * exp((mu - sigma^2/2) * dt + sigma * sqrt(dt) * Z)
+    where Z ~ N(0, 1)
 
 Features:
-- 支持自定义股票配置（价格、波动率、趋势）
-- 模拟真实市场行为（价格走势、成交量、分红、拆股）
-- 支持多种输出格式（JSON、CSV、Parquet）
-- 可生成预定义数据集（小、中、大规模）
-- 与 Alpha Vantage API 格式完全兼容
-- 支持增量数据生成
+- Geometric Brownian Motion price simulation (log-normal returns)
+- Configurable drift (mu) and volatility (sigma) per stock
+- Realistic market behavior (OHLCV, dividends, stock splits)
+- Multiple output formats (JSON, CSV, Parquet)
+- Predefined dataset presets (demo, small, medium, large)
+- Alpha Vantage API format compatibility
+- Incremental data generation support
 
 Usage:
-    # 快速生成默认数据集
+    # Quick demo dataset
     python scripts/data_generator.py --preset demo
 
-    # 自定义生成
+    # Custom generation
     python scripts/data_generator.py \
         --symbols AAPL GOOGL MSFT \
         --days 180 \
         --format json \
         --trend bullish
 
-    # 生成大规模测试数据
+    # Large-scale stress test data
     python scripts/data_generator.py --preset large
 
-    # 增量生成（追加新数据）
+    # Incremental generation (append new data)
     python scripts/data_generator.py \
         --incremental \
         --days 30
@@ -58,7 +67,16 @@ random.seed(42)
 # ==============================================================================
 
 class StockConfig:
-    """股票配置类"""
+    """
+    Stock configuration for GBM simulation.
+
+    Each stock is parameterized by:
+        - mu (annualized drift): expected return per year
+        - sigma (annualized volatility): standard deviation of returns per year
+        - Daily parameters are derived as:
+            daily_mu = mu / 252
+            daily_sigma = sigma / sqrt(252)
+    """
 
     CONFIGS = {
         "AAPL": {
@@ -66,9 +84,9 @@ class StockConfig:
             "sector": "Technology",
             "exchange": "NASDAQ",
             "initial_price": 180.0,
-            "volatility": 0.020,      # 2% 日波动率
-            "trend": 0.0003,          # 0.03% 日趋势
-            "dividend_yield": 0.005,  # 0.5% 年化股息
+            "mu": 0.08,               # 8% annualized drift
+            "sigma": 0.30,            # 30% annualized volatility
+            "dividend_yield": 0.005,   # 0.5% annual dividend yield
             "split_probability": 0.001,
             "volume_base": 60_000_000,
         },
@@ -77,8 +95,8 @@ class StockConfig:
             "sector": "Technology",
             "exchange": "NASDAQ",
             "initial_price": 140.0,
-            "volatility": 0.025,
-            "trend": 0.0004,
+            "mu": 0.10,               # 10% annualized drift
+            "sigma": 0.35,            # 35% annualized volatility
             "dividend_yield": 0.0,
             "split_probability": 0.0005,
             "volume_base": 25_000_000,
@@ -88,8 +106,8 @@ class StockConfig:
             "sector": "Technology",
             "exchange": "NASDAQ",
             "initial_price": 370.0,
-            "volatility": 0.018,
-            "trend": 0.0005,
+            "mu": 0.12,               # 12% annualized drift
+            "sigma": 0.28,            # 28% annualized volatility
             "dividend_yield": 0.008,
             "split_probability": 0.0003,
             "volume_base": 30_000_000,
@@ -99,8 +117,8 @@ class StockConfig:
             "sector": "Consumer Cyclical",
             "exchange": "NASDAQ",
             "initial_price": 155.0,
-            "volatility": 0.030,
-            "trend": 0.0002,
+            "mu": 0.06,               # 6% annualized drift
+            "sigma": 0.40,            # 40% annualized volatility
             "dividend_yield": 0.0,
             "split_probability": 0.0008,
             "volume_base": 50_000_000,
@@ -110,8 +128,8 @@ class StockConfig:
             "sector": "Automotive",
             "exchange": "NASDAQ",
             "initial_price": 240.0,
-            "volatility": 0.040,
-            "trend": 0.0001,
+            "mu": 0.03,               # 3% annualized drift
+            "sigma": 0.55,            # 55% annualized volatility
             "dividend_yield": 0.0,
             "split_probability": 0.001,
             "volume_base": 100_000_000,
@@ -121,8 +139,8 @@ class StockConfig:
             "sector": "Technology",
             "exchange": "NASDAQ",
             "initial_price": 500.0,
-            "volatility": 0.035,
-            "trend": 0.0008,
+            "mu": 0.20,               # 20% annualized drift
+            "sigma": 0.50,            # 50% annualized volatility
             "dividend_yield": 0.001,
             "split_probability": 0.002,
             "volume_base": 40_000_000,
@@ -132,8 +150,8 @@ class StockConfig:
             "sector": "Technology",
             "exchange": "NASDAQ",
             "initial_price": 350.0,
-            "volatility": 0.028,
-            "trend": 0.0003,
+            "mu": 0.08,               # 8% annualized drift
+            "sigma": 0.38,            # 38% annualized volatility
             "dividend_yield": 0.0,
             "split_probability": 0.0,
             "volume_base": 20_000_000,
@@ -143,8 +161,8 @@ class StockConfig:
             "sector": "Financial Services",
             "exchange": "NYSE",
             "initial_price": 150.0,
-            "volatility": 0.015,
-            "trend": 0.0002,
+            "mu": 0.06,               # 6% annualized drift
+            "sigma": 0.22,            # 22% annualized volatility
             "dividend_yield": 0.025,
             "split_probability": 0.0001,
             "volume_base": 15_000_000,
@@ -164,26 +182,26 @@ class StockConfig:
     @classmethod
     def apply_market_condition(cls, symbol: str, condition: str) -> Dict[str, Any]:
         """
-        根据市场条件调整配置
+        Adjust GBM parameters (mu, sigma) based on market regime.
 
         Args:
-            symbol: 股票代码
-            condition: 市场条件 (bullish, bearish, volatile, stable)
+            symbol: Stock ticker
+            condition: Market regime (bullish, bearish, volatile, stable)
         """
         config = cls.get(symbol).copy()
 
         if condition == "bullish":
-            config["trend"] *= 3  # 强势上涨
-            config["volatility"] *= 0.8  # 降低波动
+            config["mu"] *= 3          # Strong upward drift
+            config["sigma"] *= 0.8     # Lower volatility
         elif condition == "bearish":
-            config["trend"] *= -2  # 下跌
-            config["volatility"] *= 1.2  # 增加波动
+            config["mu"] *= -2         # Negative drift
+            config["sigma"] *= 1.2     # Higher volatility
         elif condition == "volatile":
-            config["volatility"] *= 2  # 高波动
-            config["trend"] *= 0.5  # 趋势减弱
+            config["sigma"] *= 2       # High volatility
+            config["mu"] *= 0.5        # Weaker drift
         elif condition == "stable":
-            config["volatility"] *= 0.5  # 低波动
-            config["trend"] *= 0.5  # 平稳
+            config["sigma"] *= 0.5     # Low volatility
+            config["mu"] *= 0.5        # Mild drift
 
         return config
 
@@ -193,7 +211,22 @@ class StockConfig:
 # ==============================================================================
 
 class StockDataGenerator:
-    """股票数据生成器"""
+    """
+    Geometric Brownian Motion (GBM) based stock data generator.
+
+    Implements the GBM stochastic differential equation:
+        dS = mu * S * dt + sigma * S * dW
+
+    Closed-form (exact) solution for discrete time steps:
+        S(t+dt) = S(t) * exp((mu - sigma^2/2) * dt + sigma * sqrt(dt) * Z)
+        where Z ~ N(0,1) is a standard normal variate.
+
+    This ensures log-returns are normally distributed (prices are log-normal),
+    which is the standard assumption in quantitative finance (Black-Scholes).
+    """
+
+    # Trading days per year (used to convert annualized params to daily)
+    TRADING_DAYS_PER_YEAR = 252
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -201,39 +234,61 @@ class StockDataGenerator:
         self.cumulative_dividend = 0.0
         self.split_coefficient = 1.0
 
+        # Convert annualized GBM parameters to daily
+        self.mu_annual = config["mu"]           # annualized drift
+        self.sigma_annual = config["sigma"]     # annualized volatility
+        self.dt = 1.0 / self.TRADING_DAYS_PER_YEAR  # one trading day
+
+        # Daily parameters derived from annualized values
+        self.daily_drift = (self.mu_annual - 0.5 * self.sigma_annual ** 2) * self.dt
+        self.daily_diffusion = self.sigma_annual * math.sqrt(self.dt)
+
+    def _gbm_step(self, price: float) -> float:
+        """
+        Single GBM step using the exact closed-form solution.
+
+        S(t+dt) = S(t) * exp((mu - sigma^2/2)*dt + sigma*sqrt(dt)*Z)
+
+        Returns:
+            New price after one trading day.
+        """
+        z = random.gauss(0, 1)
+        return price * math.exp(self.daily_drift + self.daily_diffusion * z)
+
     def generate_daily_ohlcv(self) -> Tuple[float, float, float, float, int]:
         """
-        生成单日 OHLCV 数据
+        Generate a single day's OHLCV data using GBM.
+
+        The opening gap and intraday high/low are also driven by the
+        GBM volatility parameter to maintain consistent dynamics.
 
         Returns:
             (open, high, low, close, volume)
         """
-        volatility = self.config["volatility"]
-        trend = self.config["trend"]
         volume_base = self.config["volume_base"]
 
-        # 开盘价：前收盘 ± 跳空
-        gap = random.gauss(0, volatility / 2)
-        open_price = self.current_price * (1 + gap)
+        # Opening price: GBM step from previous close (overnight gap)
+        gap_diffusion = self.daily_diffusion * 0.5  # overnight ~ half-day vol
+        z_gap = random.gauss(0, 1)
+        open_price = self.current_price * math.exp(gap_diffusion * z_gap)
 
-        # 日内波动
-        intraday_vol = abs(random.gauss(volatility, volatility / 3))
-        intraday_vol = max(0.001, intraday_vol)
+        # Closing price: GBM step from open (intraday move)
+        close_price = self._gbm_step(open_price)
 
-        # 收盘价：趋势 + 随机
-        price_change = random.gauss(trend, volatility)
-        close_price = open_price * (1 + price_change)
+        # Intraday high/low: extend range by intraday volatility
+        intraday_sigma = abs(random.gauss(self.daily_diffusion, self.daily_diffusion / 3))
+        intraday_sigma = max(0.001, intraday_sigma)
 
-        # 高低价
-        intraday_range = abs(random.gauss(0, intraday_vol))
+        intraday_range = abs(random.gauss(0, intraday_sigma))
         high_price = max(open_price, close_price) * (1 + intraday_range)
         low_price = min(open_price, close_price) * (1 - intraday_range)
 
-        # 确保逻辑正确
+        # Enforce OHLC constraints
         high_price = max(high_price, open_price, close_price)
         low_price = min(low_price, open_price, close_price)
+        low_price = max(low_price, 0.01)  # Floor at 1 cent
 
-        # 成交量
+        # Volume: log-normal distribution (consistent with empirical finance)
         volume_multiplier = random.lognormvariate(0, 0.5)
         volume = int(volume_base * volume_multiplier)
 
@@ -247,19 +302,19 @@ class StockDataGenerator:
 
     def generate_dividend(self, current_date: date, close_price: float) -> float:
         """
-        生成分红（季度末概率性发放）
+        Generate dividend payment (quarterly probability at month-end).
 
         Args:
-            current_date: 当前日期
-            close_price: 收盘价
+            current_date: Current date
+            close_price: Closing price
 
         Returns:
-            分红金额
+            Dividend amount (0.0 if none)
         """
         if current_date.month % 3 != 0 or current_date.day < 28:
             return 0.0
 
-        if random.random() < 0.3:  # 30% 概率发放
+        if random.random() < 0.3:  # 30% probability of payment
             dividend = close_price * self.config["dividend_yield"] / 4
             self.cumulative_dividend += dividend
             return round(dividend, 4)
@@ -268,13 +323,13 @@ class StockDataGenerator:
 
     def generate_split(self) -> float:
         """
-        生成股票拆分（罕见事件）
+        Generate stock split (rare event).
 
         Returns:
-            拆分系数 (1.0 = 无拆分)
+            Split coefficient (1.0 = no split)
         """
         if random.random() < self.config["split_probability"]:
-            split = random.choice([2.0, 3.0, 0.5])  # 2:1, 3:1 或 1:2
+            split = random.choice([2.0, 3.0, 0.5])  # 2:1, 3:1, or 1:2
             self.split_coefficient *= split
             return split
         return 1.0
@@ -286,32 +341,36 @@ class StockDataGenerator:
         end_date: date,
     ) -> List[Dict[str, Any]]:
         """
-        生成完整历史数据
+        Generate full price history using GBM simulation.
+
+        Each day's close price feeds into the next day's open via the
+        GBM process, producing realistic path-dependent price trajectories
+        with log-normally distributed returns.
 
         Args:
-            symbol: 股票代码
-            start_date: 开始日期
-            end_date: 结束日期
+            symbol: Stock ticker
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
 
         Returns:
-            数据记录列表（最新日期在前）
+            List of daily records (most recent first)
         """
         records = []
         current_date = start_date
 
         while current_date <= end_date:
-            # 跳过周末
+            # Skip weekends
             if current_date.weekday() >= 5:
                 current_date += timedelta(days=1)
                 continue
 
-            # 生成 OHLC
+            # Generate OHLCV via GBM
             open_p, high, low, close_p, volume = self.generate_daily_ohlcv()
 
-            # 分红
+            # Dividends
             dividend = self.generate_dividend(current_date, close_p)
 
-            # 拆股
+            # Stock splits
             split = self.generate_split()
             if split != 1.0:
                 open_p /= split
@@ -320,10 +379,9 @@ class StockDataGenerator:
                 close_p /= split
                 volume = int(volume * split)
 
-            # 调整后收盘价
+            # Adjusted close accounts for dividends
             adjusted_close = close_p - dividend
 
-            # 记录
             record = {
                 "symbol": symbol,
                 "timestamp": current_date.strftime("%Y-%m-%d"),
@@ -339,12 +397,12 @@ class StockDataGenerator:
 
             records.append(record)
 
-            # 更新当前价格
+            # Update current price for next day's GBM step
             self.current_price = close_p
 
             current_date += timedelta(days=1)
 
-        # 最新日期在前
+        # Most recent date first
         return list(reversed(records))
 
 
