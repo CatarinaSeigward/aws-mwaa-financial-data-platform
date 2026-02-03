@@ -30,12 +30,12 @@ def sample_stock_data() -> pd.DataFrame:
 
     records = []
     for symbol in symbols:
-        base_price = {"AAPL": 150.0, "GOOGL": 140.0, "MSFT": 370.0}[symbol]
+        price = {"AAPL": 150.0, "GOOGL": 140.0, "MSFT": 370.0}[symbol]
 
         for i, date in enumerate(dates):
-            # Simulate price movement
+            # GBM-style daily step: compound from previous close
             daily_return = np.random.normal(0.001, 0.02)
-            price = base_price * (1 + daily_return) ** i
+            price = price * (1 + daily_return)
 
             high = price * (1 + abs(np.random.normal(0, 0.01)))
             low = price * (1 - abs(np.random.normal(0, 0.01)))
